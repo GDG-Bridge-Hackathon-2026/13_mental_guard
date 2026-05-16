@@ -38,10 +38,9 @@ export function buildOpenApiDocument() {
         'Auth: every `/api/*` request requires a Firebase ID token (`Authorization: Bearer <token>`).\n' +
         'WebSocket endpoints are not in this OpenAPI spec — see `docs/websocket.md`.',
     },
-    servers: [
-      { url: 'http://localhost:4000', description: 'Local dev / VM' },
-      { url: 'http://34.170.117.171:4000', description: 'GCP VM' },
-    ],
+    // '/' 만 두면 Swagger UI가 현재 페이지 origin을 자동 사용.
+    // 어디서 띄우든 (localhost / VM IP / Cloudflare tunnel HTTPS) 자동 매칭.
+    servers: [{ url: '/', description: 'Current host' }],
     tags: [
       { name: 'Sessions', description: '세션 / Sessions' },
       { name: 'Turns', description: '발화 / Turns' },
