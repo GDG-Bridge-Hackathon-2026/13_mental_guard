@@ -54,7 +54,7 @@ class TurnItem(BaseModel):
     )
 
     # Only CALLER, optional
-    threat_level: Optional[int] = Field(None, ge=1, le=5) = Field(
+    threat_level: Optional[int] = Field(
         ...,
         ge=1,
         le=5,
