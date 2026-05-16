@@ -60,6 +60,7 @@ jobs:
                 --name mental-guard-server \
                 --restart unless-stopped \
                 -p 4000:4000 \
+                --add-host=host.docker.internal:host-gateway \
                 --env-file ./server/.env \
                 mental-guard-server:dev
             else
