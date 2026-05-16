@@ -2,9 +2,10 @@ import os
 from google import genai
 from fastapi import FastAPI
 from google.genai.types import GenerateContentConfig, ThinkingConfig
-import analyze_model as analyze_model
-
-import prompt_template
+import analyze_model
+import summarize_model
+import analyze_prompt
+import summarize_prompt
 
 app = FastAPI()
 
@@ -14,7 +15,7 @@ async def analyze_claim(req: analyze_model.InputRequest):
         api_key=os.getenv("GEMINI_API_KEY")
     )
 
-    content = prompt_template.prompt_template.format(INPUT_JSON=req)
+    content = analyze_prompt.prompt_template.format(INPUT_JSON=req)
 
     response = client.models.generate_content(
         model=os.getenv("MODEL_NAME"), contents=content, 
@@ -25,6 +26,25 @@ async def analyze_claim(req: analyze_model.InputRequest):
         ),
     )
     result = analyze_model.AnalysisResponse.model_validate_json(response.text)
+    return result
+
+@app.post("/summarize", response_model=summarize_model.SummarizeResponse)
+async def summarize_claim(req: summarize_model.SummarizeInput):
+    client = genai.Client(
+        api_key=os.getenv("GEMINI_API_KEY")
+    )
+
+    content = summarize_prompt.prompt_template.format(INPUT_JSON=req)
+
+    response = client.models.generate_content(
+        model=os.getenv("MODEL_NAME"), contents=content, 
+        config=GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=summarize_model.SummarizeResponse,
+            thinking_config=ThinkingConfig(thinking_budget=0)
+        ),
+    )
+    result = summarize_model.SummarizeResponse.model_validate_json(response.text)
     return result
 
 # Example request:

@@ -11,6 +11,7 @@ docker build -t llm-analyzer .
 docker run --env-file .env --rm -p 5555:5555 llm-analyzer
 ``` 
 - For running request test, you can run the following command.
+- /analyzeのtest
 ```
 curl -X POST "http://127.0.0.1:5555/analyze" \
   -H "Content-Type: application/json" \
@@ -47,3 +48,33 @@ curl -X POST "http://127.0.0.1:5555/analyze" \
   }
 }
 ``` 
+- /summarizeのtest
+```
+curl -X POST "http://127.0.0.1:5555/summarize" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "turns": [
+      {
+        "seq": 1,
+        "speaker": "CALLER",
+        "text": "지난주에도 문의했는데 아직 처리가 안 됐습니다.",
+        "classification": "B",
+        "threat_level": 2
+      },
+      {
+        "seq": 2,
+        "speaker": "AGENT",
+        "text": "접수번호를 먼저 확인하겠습니다."
+      },
+      {
+        "seq": 3,
+        "speaker": "CALLER",
+        "text": "도대체 언제까지 기다려야 합니까?",
+        "classification": "C",
+        "threat_level": 4
+      }
+    ],
+    "cumulative_threat": 3.0,
+    "language": "KO"
+  }'
+```
