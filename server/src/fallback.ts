@@ -37,3 +37,17 @@ export function defaultAnalysis(rawText: string): AnalysisPayload {
     },
   };
 }
+
+/**
+ * ML /summarize 실패 시 기본 종합 분석.
+ * 데모/개발 환경에서 ML 없이도 PATCH /end가 동작하도록.
+ */
+export function defaultSummary(): SummarizeResponse {
+  return {
+    final_classification: Classification.B,
+    final_action: ActionLevel.CAUTION,
+    core_demands: ['(분석 미사용 — ML 서비스 비활성)'],
+    agent_response_summary: [],
+    legal_basis_keys: [],
+  };
+}

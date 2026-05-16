@@ -1,6 +1,7 @@
 import { prisma } from '../prisma.js';
 import { newSessionId } from '../ids.js';
 import { ApiError } from '../errors.js';
+import { J } from '../utils/json.js';
 import { emptyDistribution } from '../thresholds.js';
 import { emit } from '../events.js';
 import {
@@ -31,11 +32,8 @@ export async function createSession(input: {
       language: input.language,
       mode: input.mode,
       status: SessionStatus.CREATED,
-      classificationDistribution:
-        emptyDistribution() as unknown as Prisma.InputJsonValue,
-      metadata: input.metadata
-        ? (input.metadata as unknown as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
+      classificationDistribution: J(emptyDistribution()),
+      metadata: input.metadata ? J(input.metadata) : Prisma.JsonNull,
     },
   });
 }
@@ -124,12 +122,7 @@ export async function listSessions(filter: {
   const orderBy = { [filter.sortField]: filter.sortDir } as Prisma.SessionOrderByWithRelationInput;
 
   const [sessions, total] = await Promise.all([
-    prisma.session.findMany({
-      where,
-      orderBy,
-      skip: filter.offset,
-      take: filter.limit,
-    }),
+    prisma.session.findMany({ where, orderBy, skip: filter.offset, take: filter.limit }),
     prisma.session.count({ where }),
   ]);
   return { sessions, total };

@@ -1,14 +1,12 @@
-// OpenAPI 컴포넌트 schemas — 요청/응답 모양 정의.
-// 한·영 description 병기. 입력 스키마는 src/schemas.ts를 재사용하되 .openapi()로 이름 부여.
+// OpenAPI 컴포넌트 schemas — 요청/응답 모양.
+// .openapi('Name', meta) 한 번만 호출하면 paths에서 참조될 때 자동으로 components/schemas에 등록.
 
 import './setup.js';
 import { z } from 'zod';
-import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import * as S from '../schemas.js';
+import { bilingual } from './i18n.js';
 
-const bilingual = (ko: string, en: string) => `${ko}\n\n${en}`;
-
-// ── shared enums (string)  ───────────────────────────────────────────────
+// ── shared enums (string) ────────────────────────────────────────────────
 const SpeakerStr = z.enum(['caller', 'agent']);
 const SourceStr = z.enum(['voice', 'text']);
 const DeliveryMethodStr = z.enum(['caption', 'audio', 'text']);
@@ -80,7 +78,7 @@ export const TurnOutput = z
     timestamp: z.string().datetime(),
   })
   .openapi('Turn', {
-    description: bilingual('발화 1턴 (민원인 또는 접수인)', 'A single utterance turn (caller or agent)'),
+    description: bilingual('발화 1턴 (민원인 또는 접수인)', 'A single utterance turn'),
   });
 
 // ── output: Analysis ─────────────────────────────────────────────────────
@@ -107,7 +105,7 @@ const RecommendedActionJson = z.object({
     .openapi({
       description: bilingual(
         '톤별 추천 응답 (키는 한국어 고정: 공감/단호/위로)',
-        'Recommended scripts by tone (keys are fixed Korean: 공감/단호/위로)'
+        'Recommended scripts by tone (keys are fixed Korean)'
       ),
     }),
   legal_basis: z.string().nullable(),
@@ -131,7 +129,7 @@ export const AnalysisOutput = z
   .openapi('Analysis', {
     description: bilingual(
       'LLM이 caller 턴마다 만드는 분석 결과',
-      'LLM analysis result generated per caller turn'
+      'LLM analysis result per caller turn'
     ),
   });
 
@@ -190,7 +188,7 @@ export const SessionEventOutput = z
   })
   .openapi('SessionEvent');
 
-// ── output: Note / Escalation / Feedback ─────────────────────────────────
+// ── output: Note / Escalation ────────────────────────────────────────────
 export const NoteOutput = z
   .object({
     id: z.string(),
@@ -240,36 +238,14 @@ export const AgentTurnVoiceMultipart = z
   })
   .openapi('AgentTurnVoiceMultipart');
 
-// ── input schemas: src/schemas.ts에서 가져와 이름만 부여 ─────────────────
+// ── input schemas: src/schemas.ts 재활용, 이름만 부여 ───────────────────
 export const CreateSessionInput = S.CreateSessionSchema.openapi('CreateSessionInput');
 export const PatchStatusInput = S.PatchStatusSchema.openapi('PatchStatusInput');
 export const EndSessionInput = S.EndSessionSchema.openapi('EndSessionInput');
 export const CreateTurnTextInput = S.CreateTurnTextSchema.openapi('CreateTurnTextInput');
 export const CreateAgentTurnTextInput = S.CreateAgentTurnTextSchema.openapi('CreateAgentTurnTextInput');
 export const RegenerateScriptInput = S.RegenerateScriptSchema.openapi('RegenerateScriptInput');
+export const MintCallerTokenSchema = S.MintCallerTokenSchema.openapi('MintCallerTokenInput');
 export const CreateNoteInput = S.CreateNoteSchema.openapi('CreateNoteInput');
 export const CreateEscalationInput = S.CreateEscalationSchema.openapi('CreateEscalationInput');
 export const CreateFeedbackInput = S.CreateFeedbackSchema.openapi('CreateFeedbackInput');
-
-export function registerSchemas(registry: OpenAPIRegistry) {
-  // 명시 등록. .openapi('Name', ...) 의 첫 인자와 동일 이름 사용.
-  registry.register('Session', SessionOutput);
-  registry.register('Turn', TurnOutput);
-  registry.register('Analysis', AnalysisOutput);
-  registry.register('SessionSummary', SessionSummaryOutput);
-  registry.register('SessionEvent', SessionEventOutput);
-  registry.register('Note', NoteOutput);
-  registry.register('Escalation', EscalationOutput);
-  registry.register('Error', ErrorResponseSchema);
-  registry.register('TurnVoiceMultipart', TurnVoiceMultipart);
-  registry.register('AgentTurnVoiceMultipart', AgentTurnVoiceMultipart);
-  registry.register('CreateSessionInput', CreateSessionInput);
-  registry.register('PatchStatusInput', PatchStatusInput);
-  registry.register('EndSessionInput', EndSessionInput);
-  registry.register('CreateTurnTextInput', CreateTurnTextInput);
-  registry.register('CreateAgentTurnTextInput', CreateAgentTurnTextInput);
-  registry.register('RegenerateScriptInput', RegenerateScriptInput);
-  registry.register('CreateNoteInput', CreateNoteInput);
-  registry.register('CreateEscalationInput', CreateEscalationInput);
-  registry.register('CreateFeedbackInput', CreateFeedbackInput);
-}

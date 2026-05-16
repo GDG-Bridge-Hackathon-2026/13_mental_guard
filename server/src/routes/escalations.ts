@@ -1,17 +1,19 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
+import { loadSession } from '../middleware/session-access.js';
+import { ah } from '../utils/async-handler.js';
 import { CreateEscalationSchema } from '../schemas.js';
 import { createEscalation, listEscalations } from '../services/escalations.js';
-import { assertSessionAccess, getSession } from '../services/sessions.js';
 
 export const escalationsRouter = Router();
 
 // POST /api/sessions/:id/escalations
-escalationsRouter.post('/sessions/:id/escalations', requireAuth, async (req, res, next) => {
-  try {
+escalationsRouter.post(
+  '/sessions/:id/escalations',
+  requireAuth,
+  loadSession,
+  ah(async (req, res) => {
     const body = CreateEscalationSchema.parse(req.body);
-    const s = await getSession(req.params.id);
-    assertSessionAccess(s, req.user!);
     const escalation = await createEscalation({
       sessionId: req.params.id,
       type: body.type,
@@ -19,19 +21,16 @@ escalationsRouter.post('/sessions/:id/escalations', requireAuth, async (req, res
       requestedBy: req.user!.id,
     });
     res.status(201).json({ escalation_id: escalation.id, status: 'created' });
-  } catch (e) {
-    next(e);
-  }
-});
+  })
+);
 
 // GET /api/sessions/:id/escalations
-escalationsRouter.get('/sessions/:id/escalations', requireAuth, async (req, res, next) => {
-  try {
-    const s = await getSession(req.params.id);
-    assertSessionAccess(s, req.user!);
+escalationsRouter.get(
+  '/sessions/:id/escalations',
+  requireAuth,
+  loadSession,
+  ah(async (req, res) => {
     const escalations = await listEscalations(req.params.id);
     res.json({ escalations });
-  } catch (e) {
-    next(e);
-  }
-});
+  })
+);

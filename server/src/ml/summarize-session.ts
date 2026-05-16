@@ -2,6 +2,7 @@ import { env } from '../env.js';
 import { ApiError } from '../errors.js';
 import { z } from 'zod';
 import { Classification, ActionLevel } from '@prisma/client';
+import { defaultSummary } from '../fallback.js';
 
 const SummarizeResponseSchema = z.object({
   final_classification: z.nativeEnum(Classification),
@@ -34,8 +35,10 @@ export async function summarizeSession(
   input: SummarizeInput,
   sessionId: string
 ): Promise<SummarizeResponse> {
+  // ML 서비스 미설정 → 데모 fallback 반환 (analyzeTurn과 동일 정책)
   if (!env.ML_SERVICE_URL) {
-    throw new ApiError(500, 'LLM_FAILED', 'ML_SERVICE_URL not configured');
+    console.warn('[summarizeSession] ML_SERVICE_URL missing, using defaultSummary');
+    return defaultSummary();
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), env.ML_SERVICE_TIMEOUT_MS);
@@ -50,12 +53,19 @@ export async function summarizeSession(
       signal: controller.signal,
     });
     if (!res.ok) {
-      throw new ApiError(500, 'LLM_FAILED', `ml /summarize ${res.status}: ${await res.text()}`);
+      console.warn(`[summarizeSession] ml /summarize ${res.status}, using defaultSummary`);
+      return defaultSummary();
     }
-    return SummarizeResponseSchema.parse(await res.json());
+    const parsed = SummarizeResponseSchema.safeParse(await res.json());
+    if (!parsed.success) {
+      console.warn('[summarizeSession] invalid response shape, using defaultSummary');
+      return defaultSummary();
+    }
+    return parsed.data;
   } catch (e) {
     if (e instanceof ApiError) throw e;
-    throw new ApiError(500, 'LLM_FAILED', String(e));
+    console.warn('[summarizeSession] failed, using defaultSummary', String(e));
+    return defaultSummary();
   } finally {
     clearTimeout(timer);
   }

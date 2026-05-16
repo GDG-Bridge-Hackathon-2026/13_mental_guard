@@ -60,6 +60,10 @@ export const CreateAgentTurnVoiceSchema = z.object({
 });
 
 // /scripts/regenerate — tone은 명세대로 한국어
+export const MintCallerTokenSchema = z.object({
+  ttl_seconds: z.coerce.number().int().min(60).optional(),
+});
+
 export const RegenerateScriptSchema = z.object({
   tone: z.enum(['공감', '단호', '위로']),
   additional_context: z.string().max(2000).optional(),

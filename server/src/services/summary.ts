@@ -1,12 +1,12 @@
 import { prisma } from '../prisma.js';
 import { ApiError } from '../errors.js';
 import { emit } from '../events.js';
+import { J } from '../utils/json.js';
 import {
   Classification,
   Speaker,
   SessionStatus,
   EventType,
-  Prisma,
 } from '@prisma/client';
 import type {
   AnalysisMetrics,
@@ -89,8 +89,7 @@ export async function endSession(sessionId: string): Promise<SessionSummary> {
       max_threat: maxThreat,
       factual_ratio: session.factualRatioAvg,
       repetition_score: session.repetitionAvg,
-      distribution:
-        session.classificationDistribution as unknown as ClassificationDistribution,
+      distribution: session.classificationDistribution as unknown as ClassificationDistribution,
     },
     timeline: callerTurns.map((t) => ({
       seq: t.seq,
@@ -110,9 +109,9 @@ export async function endSession(sessionId: string): Promise<SessionSummary> {
       endedAt: new Date(),
       finalClassification: mlSummary.final_classification,
       finalAction: mlSummary.final_action,
-      legalBasis: legalBasis as unknown as Prisma.InputJsonValue,
-      coreDemands: mlSummary.core_demands as unknown as Prisma.InputJsonValue,
-      summary: summary as unknown as Prisma.InputJsonValue,
+      legalBasis: J(legalBasis),
+      coreDemands: J(mlSummary.core_demands),
+      summary: J(summary),
     },
   });
 
@@ -121,21 +120,20 @@ export async function endSession(sessionId: string): Promise<SessionSummary> {
   return summary;
 }
 
-export async function getCachedSummary(
-  sessionId: string
-): Promise<{ summary: SessionSummary; agentId: string }> {
+/**
+ * 종료된 세션의 캐시된 SessionSummary 반환.
+ * ownership 검증은 라우트 미들웨어(loadSession) 책임.
+ */
+export async function getCachedSummary(sessionId: string): Promise<SessionSummary> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { agentId: true, endedAt: true, summary: true },
+    select: { endedAt: true, summary: true },
   });
   if (!session) throw new ApiError(404, 'SESSION_NOT_FOUND', `session ${sessionId} not found`);
   if (!session.endedAt || !session.summary) {
     throw new ApiError(409, 'SESSION_NOT_ENDED', 'call PATCH /sessions/:id/end first');
   }
-  return {
-    summary: session.summary as unknown as SessionSummary,
-    agentId: session.agentId,
-  };
+  return session.summary as unknown as SessionSummary;
 }
 
 // ── TODO(사람) 구현 필요 ──────────────────────────────────────────────────
@@ -144,13 +142,10 @@ async function findRepeatCaller(
   _agentId: string,
   _metadata: Record<string, string> | null
 ): Promise<{ is_repeat: boolean; similar_past_sessions: string[] } | null> {
-  // 예: metadata.caller_id 또는 caller_phone_masked로 매칭
   return null;
 }
 
-export async function getAgentHealthMetrics(
-  agentId: string
-): Promise<{
+export async function getAgentHealthMetrics(agentId: string): Promise<{
   today_high_risk_count: number;
   filtered_abuse_count: number;
   recommended_break_minutes: number;
@@ -178,7 +173,6 @@ export async function getAgentHealthMetrics(
   return {
     today_high_risk_count: highRiskCount,
     filtered_abuse_count: filteredCount,
-    recommended_break_minutes:
-      highRiskCount >= 3 ? 15 : highRiskCount >= 1 ? 5 : 0,
+    recommended_break_minutes: highRiskCount >= 3 ? 15 : highRiskCount >= 1 ? 5 : 0,
   };
 }

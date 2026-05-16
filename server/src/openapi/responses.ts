@@ -1,7 +1,9 @@
-// 공통 응답 빌더.
+// 공통 응답 빌더 + 보안 스킴 + content 헬퍼.
 
 import type { z } from 'zod';
 import { ErrorResponseSchema } from './schemas.js';
+
+export const auth = [{ bearerAuth: [] }];
 
 export const jsonContent = <T extends z.ZodTypeAny>(schema: T) => ({
   'application/json': { schema },

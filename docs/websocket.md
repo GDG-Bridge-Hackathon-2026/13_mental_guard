@@ -13,7 +13,8 @@ WebSocket 채널은 모두 이 문서를 참조하세요.
 | 항목 | 값 |
 |---|---|
 | **Base** | `ws://localhost:4000` (또는 VM/배포 호스트) |
-| **인증** | 쿼리스트링 `?token=<firebase-id-token>` — REST의 Bearer와 동일한 Firebase ID 토큰 |
+| **인증 (접수인/관리자)** | 쿼리스트링 `?token=<firebase-id-token>` — REST의 Bearer와 동일한 Firebase ID 토큰 |
+| **인증 (민원인)** | 쿼리스트링 `?token=<caller-token>` — `POST /api/sessions/:id/caller-token` 로 발급받은 단명 토큰. `caller-audio` / `caller-events` 채널만 접근 가능 |
 | **포맷** | UTF-8 JSON 메시지. 한 메시지에 하나의 JSON 객체 |
 | **이벤트 wire 포맷** | dot.case (`caption.final`, `risk.update`, …) |
 | **권한** | AGENT는 자기 세션만, SUPERVISOR/ADMIN은 모든 세션 |
@@ -112,20 +113,26 @@ Read-only channel. Anything the client sends is ignored.
 
 #### `caption.partial`
 
-(현재 미구현. 향후 streaming STT 도입 시 사용)
-*(Not implemented yet. Reserved for streaming STT later.)*
+발화 도중 GCP streaming STT가 보내는 interim 결과. **DB 영속화 X (메모리 전용).** 후속 interim이 오면 누적 텍스트가 갱신됨. 같은 발화의 audio.end 후엔 `caption.final`로 확정됨.
+
+Emitted during an utterance from GCP streaming STT interim results. **Not persisted to DB (in-memory only).** Each new interim replaces the previous one. Finalized as `caption.final` when audio.end is received.
 
 ```json
 {
-  "type": "caption.partial",
+  "id": "evt_xxxxxxxx",
   "session_id": "session_001",
-  "turn_id": "turn_temp_001",
-  "raw_partial": "...",
-  "clean_partial": "...",
-  "latency_ms": 1300,
-  "timestamp": "..."
+  "type": "caption.partial",
+  "payload": {
+    "raw_partial": "지난주에도 문의했는데...",
+    "timestamp": "2026-05-16T15:01:01.300Z"
+  },
+  "timestamp": "2026-05-16T15:01:01.300Z"
 }
 ```
+
+- `raw_partial`: STT raw text (정제/refining 적용 안 됨 — partial은 비용 절감 위해 ML 안 거침)
+- `clean_partial`: 현재 구현에선 없음. FE는 raw_partial을 fade-in 효과로 보여주는 것 추천
+- 같은 발화 동안 여러 번 발생 가능. FE는 마지막 partial만 화면에 표시
 
 #### `caption.final`
 

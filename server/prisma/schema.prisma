@@ -72,6 +72,12 @@ enum Classification {
   E
 }
 
+// ── 아래 3개 enum (Emotion/Intent/Trend)은 모델 컬럼에서 사용되지 않으므로
+// ── Prisma Client에 export되지 않습니다 (의도된 동작).
+// ── 이들은 analyses.metrics/summary JSON 필드 안에서만 쓰이며,
+// ── 코드 레벨 enum 정의는 `src/enums.ts`에 동일하게 있습니다.
+// ── 여기엔 schema 가독성/문서 목적으로만 남겨둡니다.
+
 enum Emotion {
   ANGER
   FRUSTRATION
@@ -173,6 +179,10 @@ model Session {
 
   /// 자유 키-값
   metadata                   Json?
+
+  // 민원인(Firebase 계정 없는)이 WS 접속할 때 사용하는 단명 토큰
+  callerToken                String?         @unique @map("caller_token")
+  callerTokenExpiresAt       DateTime?       @map("caller_token_expires_at")
 
   turns                      Turn[]
   events                     SessionEvent[]
