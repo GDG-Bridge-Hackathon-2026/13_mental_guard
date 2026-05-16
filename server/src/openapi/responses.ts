@@ -20,6 +20,7 @@ const errResp = (description: string) => ({
 
 export const CommonErrorResponses = {
   400: errResp('INVALID_INPUT — body/query validation failed'),
+  422: errResp('EMPTY_TRANSCRIPT — speech recognition produced no caller transcript'),
   401: errResp('UNAUTHORIZED — invalid or missing Firebase ID token'),
   403: errResp('FORBIDDEN — agent has no access to this session'),
   404: errResp('SESSION_NOT_FOUND / TURN_NOT_FOUND'),

@@ -12,6 +12,7 @@ export type ErrorCode =
   | 'PAYLOAD_TOO_LARGE'
   | 'RATE_LIMITED'
   | 'AUDIO_UPLOAD_FAILED'
+  | 'EMPTY_TRANSCRIPT'
   | 'STT_FAILED'
   | 'LLM_FAILED'
   | 'LLM_INVALID_JSON'

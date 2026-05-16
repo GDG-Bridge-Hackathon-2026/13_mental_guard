@@ -107,6 +107,7 @@ turnsRouter.post(
         logMeta.speaker = parsed.speaker;
         logMeta.fileSize = req.file?.size;
         if (!req.file) throw new ApiError(400, 'INVALID_INPUT', 'audio file required');
+        if (req.file.size === 0) throw new ApiError(400, 'INVALID_INPUT', 'audio file is empty');
         assertCallerTokenTurnAllowed(req, parsed.speaker);
 
         if (parsed.speaker === Speaker.AGENT) {

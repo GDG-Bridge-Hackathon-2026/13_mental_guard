@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 import type { WsContext } from './index.js';
 import { addCallerTurn } from '../services/turns.js';
 import { createTranscribeStream, type StreamingHandle } from '../stt.js';
+import { ApiError } from '../errors.js';
 import { emit } from '../events.js';
 import {
   emitCallerAudioEnded,
@@ -139,19 +140,21 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
           }
         } catch (e) {
           console.error('[caller-audio process]', e);
+          const errorCode = e instanceof ApiError ? e.code : 'STT_FAILED';
+          const errorMessage = e instanceof Error ? e.message : String(e);
           if (utterance.activityStarted) {
             emitCallerAudioEnded(ctx.sessionId, {
               source: 'ws',
               success: false,
-              errorCode: 'STT_FAILED',
-              errorMessage: e instanceof Error ? e.message : String(e),
+              errorCode,
+              errorMessage,
             });
           }
           send({
             type: 'error',
             error: {
-              code: 'STT_FAILED',
-              message: e instanceof Error ? e.message : String(e),
+              code: errorCode,
+              message: errorMessage,
             },
           });
         }

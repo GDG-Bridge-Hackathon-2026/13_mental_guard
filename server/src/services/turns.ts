@@ -37,6 +37,7 @@ interface AudioMaterials {
   sttUrl: string | null;
   rawText: string;
   sttConfidence: number | null;
+  sttError?: string;
 }
 
 async function uploadAndTranscribe(opts: {
@@ -74,7 +75,13 @@ async function uploadAndTranscribe(opts: {
       turn_id: turnId,
       error: e instanceof Error ? e.message : String(e),
     });
-    return { audioUrl, sttUrl: null, rawText: '', sttConfidence: null };
+    return {
+      audioUrl,
+      sttUrl: null,
+      rawText: '',
+      sttConfidence: null,
+      sttError: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 
@@ -120,17 +127,35 @@ function emptyCallerTranscript(language: Language): string {
 function normalizeCallerTranscript(
   text: string,
   language: Language,
-  context: { sessionId: string; turnId: string }
+  context: { sessionId: string; turnId: string; sttError?: string }
 ): string {
   const trimmed = text.trim();
   if (trimmed) return trimmed;
 
-  console.warn('[turns] caller voice STT produced empty transcript', {
+  if (context.sttError) {
+    console.warn('[turns] caller voice STT failed; dropping turn', {
+      session_id: context.sessionId,
+      turn_id: context.turnId,
+      language,
+      error: context.sttError,
+    });
+    throw new ApiError(
+      500,
+      'STT_FAILED',
+      'speech recognition failed; no caller turn was created'
+    );
+  }
+
+  console.warn('[turns] caller voice STT produced empty transcript; dropping turn', {
     session_id: context.sessionId,
     turn_id: context.turnId,
     language,
   });
-  return emptyCallerTranscript(language);
+  throw new ApiError(
+    422,
+    'EMPTY_TRANSCRIPT',
+    'speech recognition returned no transcript; no caller turn was created'
+  );
 }
 
 async function emitTurnEvent(
@@ -211,7 +236,11 @@ export async function addCallerTurn(
     });
     audioUrl = mat.audioUrl;
     sttUrl = mat.sttUrl;
-    rawText = normalizeCallerTranscript(mat.rawText, sttLanguage, { sessionId, turnId });
+    rawText = normalizeCallerTranscript(mat.rawText, sttLanguage, {
+      sessionId,
+      turnId,
+      sttError: mat.sttError,
+    });
     sttConfidence = mat.sttConfidence;
     durationMs = input.duration_ms ?? null;
   } else {
