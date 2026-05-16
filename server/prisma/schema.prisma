@@ -1,0 +1,316 @@
+// CivilRelay AI server schema
+// 명세 v2: speaker 분리, status/mode 추가, SessionEvent/Note/Escalation/Feedback 추가
+// enum 값은 모두 영어 ASCII (Korean labels는 src/i18n.ts).
+// 예외: Analysis.recommendedAction.scripts JSON은 명세대로 한국어 키(공감/단호/위로) 사용.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── enums ────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  AGENT
+  SUPERVISOR
+  ADMIN
+}
+
+enum Channel {
+  VOICE
+  TEXT
+  MIXED
+}
+
+enum Language {
+  KO
+  JA
+  AUTO
+}
+
+enum SessionMode {
+  CAPTION_RELAY
+  TEXT_ONLY
+  DEMO
+}
+
+enum SessionStatus {
+  CREATED
+  WAITING
+  ACTIVE
+  PAUSED
+  ENDING
+  ENDED
+  FAILED
+}
+
+enum Speaker {
+  CALLER
+  AGENT
+}
+
+enum TurnSource {
+  VOICE
+  TEXT
+}
+
+enum DeliveryMethod {
+  CAPTION
+  AUDIO
+  TEXT
+}
+
+enum Classification {
+  A
+  B
+  C
+  D
+  E
+}
+
+enum Emotion {
+  ANGER
+  FRUSTRATION
+  CYNICISM
+  CONFUSION
+  CALM
+}
+
+enum Intent {
+  LEGITIMATE_COMPLAINT
+  VENT
+  THREAT
+  INSULT
+  INQUIRY
+}
+
+enum Trend {
+  UP
+  DOWN
+  STABLE
+}
+
+enum ActionLevel {
+  NORMAL
+  CAUTION
+  ESCALATE
+  TERMINATE_ALLOWED
+  LEGAL_ACTION
+}
+
+enum EventType {
+  CAPTION_PARTIAL
+  CAPTION_FINAL
+  RISK_UPDATE
+  SUMMARY_UPDATE
+  THRESHOLD_WARNING
+  THRESHOLD_TERMINATE_ALLOWED
+  AGENT_AUDIO_READY
+  SESSION_STATUS
+  SESSION_PAUSED
+  SESSION_ENDED
+  ERROR
+}
+
+enum EscalationType {
+  SUPERVISOR_CALL
+  TERMINATE
+  LEGAL_REPORT
+}
+
+// ── models ───────────────────────────────────────────────────────────────
+
+/// 상담원/관리자. id는 Firebase UID.
+model User {
+  id          String    @id // Firebase UID
+  email       String?   @unique
+  displayName String?   @map("display_name")
+  photoUrl    String?   @map("photo_url")
+  role        UserRole  @default(AGENT)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  sessions    Session[]
+
+  @@map("users")
+}
+
+/// 통화·민원 1건
+model Session {
+  id                         String          @id // ses_xxxxxxxx
+  agentId                    String          @map("agent_id")
+  agent                      User            @relation(fields: [agentId], references: [id], onDelete: Restrict)
+
+  callerId                   String?         @map("caller_id")
+
+  channel                    Channel
+  language                   Language
+  mode                       SessionMode     @default(CAPTION_RELAY)
+  status                     SessionStatus   @default(CREATED)
+
+  startedAt                  DateTime        @default(now()) @map("started_at")
+  endedAt                    DateTime?       @map("ended_at")
+
+  totalTurns                 Int             @default(0) @map("total_turns")
+  cumulativeThreat           Float           @default(0) @map("cumulative_threat")
+  factualRatioAvg            Float           @default(0) @map("factual_ratio_avg")
+  repetitionAvg              Float           @default(0) @map("repetition_avg")
+  /// { A,B,C,D,E } 누적 횟수
+  classificationDistribution Json            @map("classification_distribution")
+
+  finalClassification        Classification? @map("final_classification")
+  finalAction                ActionLevel?    @map("final_action")
+  /// string[]
+  legalBasis                 Json?           @map("legal_basis")
+  /// string[]
+  coreDemands                Json?           @map("core_demands")
+  /// SessionSummary 캐시 (멱등 응답용)
+  summary                    Json?
+
+  /// 자유 키-값
+  metadata                   Json?
+
+  turns                      Turn[]
+  events                     SessionEvent[]
+  notes                      Note[]
+  escalations                Escalation[]
+  feedbacks                  Feedback[]
+
+  @@index([agentId, startedAt(sort: Desc)])
+  @@index([status])
+  @@index([endedAt])
+  @@map("sessions")
+}
+
+/// 발언 1턴 (caller 또는 agent)
+model Turn {
+  id             String         @id // tur_xxxxxxxx
+  sessionId      String         @map("session_id")
+  seq            Int
+
+  speaker        Speaker
+  source         TurnSource
+  deliveryMethod DeliveryMethod @map("delivery_method")
+
+  rawText        String         @map("raw_text")
+  rawAudioUrl    String?        @map("raw_audio_url")
+  /// STT transcript 텍스트 파일 URL (gs://.../stt/{sessionId}/{turnId}.txt)
+  sttUrl         String?        @map("stt_url")
+  /// caller일 때만 채워짐. agent.displayed_text는 null
+  displayedText  String?        @map("displayed_text")
+  isFiltered     Boolean        @default(false) @map("is_filtered")
+
+  durationMs     Int?           @map("duration_ms")
+  sttConfidence  Float?         @map("stt_confidence")
+  latencyMs      Int?           @map("latency_ms")
+
+  timestamp      DateTime       @default(now())
+
+  session        Session        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  analysis       Analysis?
+  feedbacks      Feedback[]
+
+  @@unique([sessionId, seq])
+  @@index([sessionId, seq])
+  @@index([speaker])
+  @@map("turns")
+}
+
+/// LLM이 caller 턴마다 만드는 분석 결과
+model Analysis {
+  id                String         @id // ana_xxxxxxxx
+  turnId            String         @unique @map("turn_id")
+
+  refined           String
+
+  /// { threat_level, emotion, factual_ratio, repetition_score, trend }
+  metrics           Json
+  /// { core_demand, intent, risk_keywords[] }
+  summary           Json
+
+  classification    Classification
+
+  /// string[] — 정제 시 보존된 사실
+  preservedFacts    Json           @default("[]") @map("preserved_facts")
+  /// string[] — 제거된 표현
+  removedExpressions Json          @default("[]") @map("removed_expressions")
+  /// string[] — 학대 표현 유형 라벨
+  abuseTypes        Json           @default("[]") @map("abuse_types")
+  confidence        Float          @default(0)
+
+  /// { level, scripts: { "공감", "단호", "위로" }, legal_basis }
+  recommendedAction Json           @map("recommended_action")
+
+  createdAt         DateTime       @default(now()) @map("created_at")
+
+  turn              Turn           @relation(fields: [turnId], references: [id], onDelete: Cascade)
+
+  @@index([classification])
+  @@map("analyses")
+}
+
+/// 세션 동안 발생하는 이벤트 로그 (WS pub/sub과 1:1 영속화)
+model SessionEvent {
+  id        String    @id // evt_xxxxxxxx
+  sessionId String    @map("session_id")
+  type      EventType
+  payload   Json
+  timestamp DateTime  @default(now())
+
+  session   Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, timestamp])
+  @@map("session_events")
+}
+
+/// 접수인이 세션 중/후 남기는 메모
+model Note {
+  id        String   @id // nte_xxxxxxxx
+  sessionId String   @map("session_id")
+  agentId   String   @map("agent_id")
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("notes")
+}
+
+/// 상급자 호출 / 강제 종료 / 법적대응 등 escalation 기록
+model Escalation {
+  id          String         @id // esc_xxxxxxxx
+  sessionId   String         @map("session_id")
+  type        EscalationType
+  reason      String?
+  requestedBy String         @map("requested_by")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  session     Session        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("escalations")
+}
+
+/// AI 분석 결과에 대한 사용자 피드백 (튜닝용)
+model Feedback {
+  id        String   @id // fbk_xxxxxxxx
+  sessionId String   @map("session_id")
+  turnId    String?  @map("turn_id")
+  /// 'classification' | 'metrics.threat_level' | ...
+  field     String
+  expected  String
+  actual    String
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  turn      Turn?    @relation(fields: [turnId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+  @@map("feedbacks")
+}
