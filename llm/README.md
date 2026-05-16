@@ -3,7 +3,7 @@
 - Make .env file and write down like the following:
 ```
 GEMINI_API_KEY=XXXXXXX
-MODEL_NAME=XXXXXXX # Example: gemini-2.5-flash
+MODEL_NAME=XXXXXXX # Example: gemini-2.5-flash-lite
 ```
 ## Build
 ```

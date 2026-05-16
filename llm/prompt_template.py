@@ -71,37 +71,6 @@ Use ONLY:
 - TERMINATE_ALLOWED
 - LEGAL_ACTION
 
-Output JSON schema:
-{{
-  "refined": "string",
-  "metrics": {{
-    "threat_level": integer,
-    "emotion": "Emotion",
-    "factual_ratio": integer,
-    "repetition_score": integer,
-    "trend": "Trend"
-  }},
-  "summary": {{
-    "core_demand": "string",
-    "intent": "Intent",
-    "risk_keywords": ["string"]
-  }},
-  "classification": "A|B|C|D|E",
-  "preserved_facts": ["string"],
-  "removed_expressions": ["string"],
-  "abuse_types": ["string"],
-  "confidence": number,
-  "recommended_action": {{
-    "level": "ActionLevel",
-    "scripts": {{
-      "공감": "string",
-      "단호": "string",
-      "위로": "string"
-    }},
-    "legal_basis": "string|null"
-  }}
-}}
-
 Field Instructions:
 
 1. refined
