@@ -18,12 +18,12 @@ Critical Rules:
   - `JA` -> Japanese
   - otherwise infer from conversation
 - Never invent facts not implied by the conversation.
-- Focus on operationally useful summaries.
+- Focus on operationally useful final summaries after conversation.
 
 Conversation Interpretation Rules:
 - CALLER turns represent customer complaints, requests, or escalation.
 - AGENT turns represent responses, guidance, or mitigation attempts.
-- Use all turns together to infer:
+- Use all turns together to decide:
   - final_classification
   - final_action
   - core_demands
@@ -52,7 +52,7 @@ Use ONLY:
 
 Field Instructions:
 1. final_classification
-- Infer the final overall conversation severity.
+- Decide the final classification value.
 - Use the latest escalation state and cumulative conversation tone.
 
 2. final_action

@@ -43,6 +43,7 @@ class TurnItem(BaseModel):
 
     # Only CALLER, optional
     classification: Optional[Classification] = Field(
+        default=None,
         description=(
             "Severity classification.\n"
             "A: Normal inquiry/request.\n"
@@ -55,7 +56,7 @@ class TurnItem(BaseModel):
 
     # Only CALLER, optional
     threat_level: Optional[int] = Field(
-        ...,
+        default=None,
         ge=1,
         le=5,
         description=(
