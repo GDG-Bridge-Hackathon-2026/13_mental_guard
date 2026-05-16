@@ -3,6 +3,10 @@ import type { WsContext } from './index.js';
 import { addCallerTurn } from '../services/turns.js';
 import { createTranscribeStream, type StreamingHandle } from '../stt.js';
 import { emit } from '../events.js';
+import {
+  emitCallerAudioEnded,
+  emitCallerAudioStarted,
+} from '../services/caller-audio-activity.js';
 import { EventType, Language } from '@prisma/client';
 
 interface ChunkMsg {
@@ -28,6 +32,7 @@ interface ActiveUtterance {
   startedAt: number;
   lastSeq: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  activityStarted: boolean;
 }
 
 const STALE_CHUNK_GUARD_MS = 1000;
@@ -72,10 +77,17 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
   ) => {
     queue = queue
       .then(async () => {
-        if (closed) return;
         try {
           const audio = Buffer.concat(utterance.audioChunks);
           if (audio.length === 0) {
+            if (utterance.activityStarted) {
+              emitCallerAudioEnded(ctx.sessionId, {
+                source: 'ws',
+                success: false,
+                errorCode: 'INVALID_INPUT',
+                errorMessage: 'empty utterance audio',
+              });
+            }
             send({
               type: 'error',
               error: { code: 'INVALID_INPUT', message: 'empty utterance audio' },
@@ -105,7 +117,7 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
             });
           }
 
-          await addCallerTurn(ctx.sessionId, {
+          const result = await addCallerTurn(ctx.sessionId, {
             type: 'voice',
             audio,
             mime: utterance.mime,
@@ -118,8 +130,23 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
                 }
               : {}),
           });
+          if (utterance.activityStarted) {
+            emitCallerAudioEnded(ctx.sessionId, {
+              source: 'ws',
+              turnId: result.turn.id,
+              success: true,
+            });
+          }
         } catch (e) {
           console.error('[caller-audio process]', e);
+          if (utterance.activityStarted) {
+            emitCallerAudioEnded(ctx.sessionId, {
+              source: 'ws',
+              success: false,
+              errorCode: 'STT_FAILED',
+              errorMessage: e instanceof Error ? e.message : String(e),
+            });
+          }
           send({
             type: 'error',
             error: {
@@ -142,6 +169,14 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
       if (utterance.audioChunks.length === 0) {
         console.warn('[caller-audio] audio.end not received; dropping empty idle utterance');
         utterance.stream?.abort();
+        if (utterance.activityStarted) {
+          emitCallerAudioEnded(ctx.sessionId, {
+            source: 'ws',
+            success: false,
+            errorCode: 'AUDIO_TIMEOUT',
+            errorMessage: 'audio.end not received before idle timeout',
+          });
+        }
         send({
           type: 'error',
           error: {
@@ -174,6 +209,7 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
       startedAt: Date.now(),
       lastSeq: 0,
       idleTimer: null,
+      activityStarted: false,
     };
 
     stream.onPartial((text) => {
@@ -228,6 +264,10 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
         const buf = Buffer.from(msg.data, 'base64');
         if (buf.length === 0) throw new Error('empty audio chunk');
 
+        if (!active.activityStarted) {
+          active.activityStarted = true;
+          emitCallerAudioStarted(ctx.sessionId, { source: 'ws' });
+        }
         active.audioChunks.push(buf);
         active.lastSeq = Math.max(active.lastSeq, msg.seq);
         scheduleIdleCleanup(active);
@@ -267,6 +307,14 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
     if (active) {
       clearIdleTimer(active);
       active.stream?.abort();
+      if (active.activityStarted) {
+        emitCallerAudioEnded(ctx.sessionId, {
+          source: 'ws',
+          success: false,
+          errorCode: 'WEBSOCKET_DISCONNECTED',
+          errorMessage: 'caller audio websocket closed before finalization',
+        });
+      }
       active = null;
     }
   };

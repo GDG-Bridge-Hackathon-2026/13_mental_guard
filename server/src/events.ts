@@ -1,13 +1,8 @@
-// 세션 이벤트 pub/sub + DB 영속화.
-// - emit: SessionEvent 테이블에 insert + 메모리 버스에 publish
-// - subscribe: WS handler가 채널 구독 (sessionId 단위)
-
 import { EventEmitter } from 'node:events';
 import { EventType, Prisma } from '@prisma/client';
 import { prisma } from './prisma.js';
 import { newEventId } from './ids.js';
 
-// 명세상 wire 포맷은 dot.case ('caption.final'). DB enum은 SCREAMING_SNAKE.
 const EVENT_WIRE: Record<EventType, string> = {
   CAPTION_PARTIAL: 'caption.partial',
   CAPTION_FINAL: 'caption.final',
@@ -35,10 +30,6 @@ bus.setMaxListeners(0);
 
 const channelKey = (sessionId: string) => `session:${sessionId}`;
 
-/**
- * 이벤트를 영속화 + 버스에 발행.
- * 메모리 전용 (휘발) 이벤트라면 persist: false.
- */
 export async function emit(
   sessionId: string,
   type: EventType,
@@ -77,9 +68,23 @@ export async function emit(
   return wire;
 }
 
-/**
- * 세션 채널 구독. 반환되는 unsubscribe()를 호출해 해제.
- */
+export function emitTransient(
+  sessionId: string,
+  type: string,
+  payload: unknown
+): WireEvent {
+  const timestamp = new Date();
+  const wire: WireEvent = {
+    id: newEventId(),
+    session_id: sessionId,
+    type,
+    payload,
+    timestamp: timestamp.toISOString(),
+  };
+  bus.emit(channelKey(sessionId), wire);
+  return wire;
+}
+
 export function subscribe(
   sessionId: string,
   listener: (event: WireEvent) => void

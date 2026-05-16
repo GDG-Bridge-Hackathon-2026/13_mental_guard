@@ -8,6 +8,10 @@ import { addCallerTurn, addAgentTurn } from '../services/turns.js';
 import { ApiError } from '../errors.js';
 import { Speaker } from '@prisma/client';
 import { toAnalysisDto, toTurnDto } from '../api-dto.js';
+import {
+  emitCallerAudioEnded,
+  emitCallerAudioStarted,
+} from '../services/caller-audio-activity.js';
 
 export const turnsRouter = Router();
 
@@ -90,6 +94,7 @@ turnsRouter.post(
       type: isMultipart ? 'voice' : 'text',
       fileSize: req.file?.size,
     };
+    let callerAudioActivityStarted = false;
 
     try {
       if (isMultipart) {
@@ -126,6 +131,11 @@ turnsRouter.post(
             playback_event_id: result.playback_event_id,
           });
         } else {
+          emitCallerAudioStarted(req.params.id, {
+            source: 'rest',
+            expectedDurationMs: parsed.duration_ms,
+          });
+          callerAudioActivityStarted = true;
           const result = await addCallerTurn(req.params.id, {
             type: 'voice',
             audio: req.file.buffer,
@@ -143,6 +153,12 @@ turnsRouter.post(
             hasAnalysis: true,
             fileSize: req.file.size,
           });
+          emitCallerAudioEnded(req.params.id, {
+            source: 'rest',
+            turnId: result.turn.id,
+            success: true,
+          });
+          callerAudioActivityStarted = false;
           res.json({
             turn: toTurnDto(result.turn),
             analysis: toAnalysisDto(result.analysis),
@@ -194,6 +210,14 @@ turnsRouter.post(
         }
       }
     } catch (err) {
+      if (callerAudioActivityStarted) {
+        emitCallerAudioEnded(req.params.id, {
+          source: 'rest',
+          success: false,
+          errorCode: err instanceof ApiError ? err.code : 'INTERNAL',
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+      }
       logTurnFailure(req, startedAt, err, logMeta);
       throw err;
     }
