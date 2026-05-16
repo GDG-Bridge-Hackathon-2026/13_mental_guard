@@ -9,6 +9,16 @@ class Speaker(str, Enum):
     AGENT = "AGENT"
 
 class Classification(str, Enum):
+    """
+    Customer interaction severity classification.
+
+    A = Normal inquiry/request
+    B = Complaint/frustration
+    C = Verbal abuse
+    D = Obstruction or non-physical threat
+    E = Criminal or physical threat
+    """
+
     A = "A"
     B = "B"
     C = "C"
@@ -31,11 +41,33 @@ class TurnItem(BaseModel):
     speaker: Speaker
     text: str
 
-    # CALLER の時だけ入るので optional
-    classification: Optional[Classification] = None
+    # Only CALLER, optional
+    classification: Optional[Classification] = Field(
+        description=(
+            "Severity classification.\n"
+            "A: Normal inquiry/request.\n"
+            "B: Complaint or frustration without abuse.\n"
+            "C: Verbal abuse, profanity, insults, mockery.\n"
+            "D: Obstruction or non-physical threats.\n"
+            "E: Physical threats, stalking, criminal intimidation."
+        )
+    )
 
-    # CALLER の時だけ入るので optional
-    threat_level: Optional[int] = Field(None, ge=1, le=5)
+    # Only CALLER, optional
+    threat_level: Optional[int] = Field(None, ge=1, le=5) = Field(
+        ...,
+        ge=1,
+        le=5,
+        description=(
+            "Stress/Danger Intensity of the call.\n\n"
+            "1: Cold/Calm — No stress, neutral interaction.\n"
+            "2: Warm — Slight agitation or annoyance.\n"
+            "3: Hot — Raised voice, aggressive tone, uncooperative behavior.\n"
+            "4: Boiling — Highly hostile, severe emotional stress to agent.\n"
+            "5: Explosive — Immediate danger or extreme hostility; "
+            "requires immediate call termination."
+        )
+    )
 
 class SummarizeInput(BaseModel):
     # schemaでは array 直接

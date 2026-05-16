@@ -10,6 +10,20 @@ class Emotion(str, Enum):
     CALM = "CALM"
 
 class Trend(str, Enum):
+    """
+    trend calculation rule:
+    - Compare current `threat_level` with the LAST value in
+      `context.recent_threats`.
+
+    Rules:
+    - UP:
+        current threat_level > last recent threat
+    - DOWN:
+        current threat_level < last recent threat
+    - STABLE:
+        current threat_level == last recent threat
+        OR context.recent_threats is empty
+    """
     UP = "UP"
     DOWN = "DOWN"
     STABLE = "STABLE"
@@ -24,6 +38,16 @@ class Intent(str, Enum):
 
 
 class Classification(str, Enum):
+    """
+    Customer interaction severity classification.
+
+    A = Normal inquiry/request
+    B = Complaint/frustration
+    C = Verbal abuse
+    D = Obstruction or non-physical threat
+    E = Criminal or physical threat
+    """
+
     A = "A"
     B = "B"
     C = "C"
@@ -38,11 +62,32 @@ class RecommendedActionLevel(str, Enum):
     LEGAL_ACTION = "LEGAL_ACTION"
 
 class Metrics(BaseModel):
-    threat_level: int = Field(..., ge=1, le=5)
+    threat_level: int = Field(
+        ...,
+        ge=1,
+        le=5,
+        description=(
+            "Stress/Danger Intensity of the call.\n\n"
+            "1: Cold/Calm — No stress, neutral interaction.\n"
+            "2: Warm — Slight agitation or annoyance.\n"
+            "3: Hot — Raised voice, aggressive tone, uncooperative behavior.\n"
+            "4: Boiling — Highly hostile, severe emotional stress to agent.\n"
+            "5: Explosive — Immediate danger or extreme hostility; "
+            "requires immediate call termination."
+        )
+    )
     emotion: Emotion
     factual_ratio: int = Field(..., ge=0, le=100)
     repetition_score: int = Field(..., ge=0, le=100)
-    trend: Trend
+    trend: Trend = Field(
+        ...,
+        description=(
+            "Threat escalation trend compared to the most recent prior turn.\n"
+            "UP: current threat_level > last recent threat.\n"
+            "DOWN: current threat_level < last recent threat.\n"
+            "STABLE: same threat_level or no prior threat history."
+        )
+    )
 
 class Summary(BaseModel):
     core_demand: str
@@ -63,7 +108,16 @@ class AnalysisResponse(BaseModel):
     refined: str
     metrics: Metrics
     summary: Summary
-    classification: Classification
+    classification: Classification = Field(
+        description=(
+            "Severity classification.\n"
+            "A: Normal inquiry/request.\n"
+            "B: Complaint or frustration without abuse.\n"
+            "C: Verbal abuse, profanity, insults, mockery.\n"
+            "D: Obstruction or non-physical threats.\n"
+            "E: Physical threats, stalking, criminal intimidation."
+        )
+    )
     preserved_facts: list[str]
     removed_expressions: list[str]
     abuse_types: list[str]
