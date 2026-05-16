@@ -14,6 +14,7 @@ jobs:
     outputs:
       server: ${{ steps.filter.outputs.server }}
       llm: ${{ steps.filter.outputs.llm }}
+      client: ${{ steps.filter.outputs.client }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,10 +27,12 @@ jobs:
               - 'server/**'
             llm:
               - 'llm/**'
+            client:
+              - 'client/**'
 
   deploy:
     needs: changes
-    if: needs.changes.outputs.server == 'true' || needs.changes.outputs.llm == 'true'
+    if: needs.changes.outputs.server == 'true' || needs.changes.outputs.llm == 'true' || needs.changes.outputs.client == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy changed services to VM
@@ -37,12 +40,14 @@ jobs:
         env:
           BUILD_SERVER: ${{ needs.changes.outputs.server }}
           BUILD_LLM:    ${{ needs.changes.outputs.llm }}
+          BUILD_CLIENT: ${{ needs.changes.outputs.client }}
           REPO_PATH:    ${{ secrets.VM_REPO_PATH }}
+          CLIENT_BACKEND_INTERNAL_URL: ${{ secrets.CLIENT_BACKEND_INTERNAL_URL }}
         with:
           host:     ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key:      ${{ secrets.VM_SSH_KEY }}
-          envs:     BUILD_SERVER,BUILD_LLM,REPO_PATH
+          envs:     BUILD_SERVER,BUILD_LLM,BUILD_CLIENT,REPO_PATH,CLIENT_BACKEND_INTERNAL_URL
           script: |
             set -euo pipefail
             cd "$REPO_PATH"
@@ -79,6 +84,35 @@ jobs:
                 mental-guard-llm:dev
             else
               echo ">>> llm unchanged, skipping"
+            fi
+
+            if [ "$BUILD_CLIENT" = "true" ]; then
+              echo ">>> Rebuild client"
+              CLIENT_BACKEND_URL="${CLIENT_BACKEND_INTERNAL_URL:-http://host.docker.internal:4000}"
+              docker build \
+                --build-arg BACKEND_INTERNAL_URL="$CLIENT_BACKEND_URL" \
+                -t mental-guard-client:dev \
+                ./client
+              docker rm -f mental-guard-client 2>/dev/null || true
+
+              CLIENT_ENV_ARGS=""
+              if [ -f ./client/.env ]; then
+                CLIENT_ENV_ARGS="--env-file ./client/.env"
+              fi
+
+              # shellcheck disable=SC2086
+              docker run -d \
+                --name mental-guard-client \
+                --restart unless-stopped \
+                -p 3000:3000 \
+                --add-host=host.docker.internal:host-gateway \
+                $CLIENT_ENV_ARGS \
+                -e BACKEND_INTERNAL_URL="$CLIENT_BACKEND_URL" \
+                -e PORT=3000 \
+                -e HOSTNAME=0.0.0.0 \
+                mental-guard-client:dev
+            else
+              echo ">>> client unchanged, skipping"
             fi
 
             echo ">>> Prune dangling images"
