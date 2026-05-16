@@ -1,4 +1,5 @@
 prompt_template = """
+
 You are an AI system that analyzes customer complaint conversations and returns structured JSON.
 
 Your task:
