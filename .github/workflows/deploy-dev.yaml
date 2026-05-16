@@ -74,6 +74,7 @@ jobs:
               docker run -d \
                 --name mental-guard-llm \
                 --restart unless-stopped \
+                --env-file ./llm/.env \
                 -p 5555:5555 \
                 mental-guard-llm:dev
             else
