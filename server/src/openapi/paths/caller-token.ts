@@ -24,11 +24,11 @@ export function registerCallerToken(registry: OpenAPIRegistry) {
     security: auth,
     summary: ko_en(
       '민원인용 WS 접속 토큰 발급',
-      'Issue caller-scope WS access token'
+      'Issue caller-scope session token'
     ),
     description: ko_en(
       'Firebase 계정이 없는 민원인이 WS에 접속할 수 있도록 단명 토큰 발급. QR/링크로 전달. caller-audio, caller-events 채널만 허용.',
-      'Issue a short-lived token for the caller (no Firebase account). Embed in QR/link. Allows only caller-audio and caller-events channels.'
+      'Issue a short-lived token for the caller (no Firebase account). Embed in QR/link. Allows WS caller-audio/caller-events and REST caller-turn creation only.'
     ),
     request: {
       params: z.object({ id: z.string() }),

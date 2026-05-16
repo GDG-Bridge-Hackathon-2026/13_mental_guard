@@ -14,7 +14,7 @@ export function registerTurns(registry: OpenAPIRegistry) {
     summary: ko_en('발화 저장 + 분석 (caller/agent)', 'Save and analyze a turn (caller/agent)'),
     description: ko_en(
       'multipart 음성 또는 JSON 텍스트. speaker로 분기. caller면 STT→ML 분석→자막, agent면 저장+민원인 음성 전달 준비.',
-      'Multipart audio or JSON text. Branches on speaker.'
+      'Multipart audio or JSON text. Firebase tokens may submit caller/agent turns. Caller tokens may only submit caller turns for their session.'
     ),
     request: {
       params: z.object({ id: z.string() }),

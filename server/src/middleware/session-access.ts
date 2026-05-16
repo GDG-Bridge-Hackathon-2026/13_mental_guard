@@ -1,6 +1,7 @@
 import type { Session } from '@prisma/client';
 import { ah } from '../utils/async-handler.js';
 import { assertSessionAccess, getSession } from '../services/sessions.js';
+import { ApiError } from '../errors.js';
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -18,7 +19,15 @@ declare module 'express-serve-static-core' {
  */
 export const loadSession = ah(async (req, _res, next) => {
   const s = await getSession(req.params.id);
-  assertSessionAccess(s, req.user!);
+  if (req.user) {
+    assertSessionAccess(s, req.user);
+  } else if (req.callerAuth) {
+    if (req.callerAuth.sessionId !== s.id) {
+      throw new ApiError(403, 'FORBIDDEN', 'caller token does not match session');
+    }
+  } else {
+    throw new ApiError(401, 'UNAUTHORIZED', 'auth required');
+  }
   req.targetSession = s;
   next();
 });

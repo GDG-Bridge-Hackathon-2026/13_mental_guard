@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { ApiError } from '../errors.js';
 import { firebaseAuth } from '../firebase.js';
 import { prisma } from '../prisma.js';
+import { verifyCallerToken } from '../services/caller-token.js';
 import type { UserRole } from '@prisma/client';
 
 export interface AuthedUser {
@@ -11,10 +12,58 @@ export interface AuthedUser {
   role: UserRole;
 }
 
+export interface CallerAuthedUser {
+  scope: 'caller';
+  sessionId: string;
+  token: string;
+}
+
 declare module 'express-serve-static-core' {
   interface Request {
     user?: AuthedUser;
+    callerAuth?: CallerAuthedUser;
   }
+}
+
+function getBearerToken(req: Request): string {
+  const header = req.header('authorization') ?? req.header('Authorization');
+  if (!header?.startsWith('Bearer ')) {
+    throw new ApiError(401, 'UNAUTHORIZED', 'Authorization: Bearer <token> required');
+  }
+  const token = header.slice('Bearer '.length).trim();
+  if (!token) throw new ApiError(401, 'UNAUTHORIZED', 'empty bearer token');
+  return token;
+}
+
+async function verifyFirebaseUser(token: string): Promise<AuthedUser> {
+  let decoded;
+  try {
+    decoded = await firebaseAuth.verifyIdToken(token);
+  } catch {
+    throw new ApiError(401, 'UNAUTHORIZED', 'invalid or expired id token');
+  }
+
+  const user = await prisma.user.upsert({
+    where: { id: decoded.uid },
+    update: {
+      email: decoded.email ?? undefined,
+      displayName: decoded.name ?? undefined,
+      photoUrl: decoded.picture ?? undefined,
+    },
+    create: {
+      id: decoded.uid,
+      email: decoded.email ?? null,
+      displayName: decoded.name ?? null,
+      photoUrl: decoded.picture ?? null,
+    },
+  });
+
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: user.role,
+  };
 }
 
 /**
@@ -29,41 +78,45 @@ export const requireAuth = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const header = req.header('authorization') ?? req.header('Authorization');
-    if (!header?.startsWith('Bearer ')) {
-      throw new ApiError(401, 'UNAUTHORIZED', 'Authorization: Bearer <id-token> required');
-    }
-    const token = header.slice('Bearer '.length).trim();
-    if (!token) throw new ApiError(401, 'UNAUTHORIZED', 'empty bearer token');
+    req.user = await verifyFirebaseUser(getBearerToken(req));
+    next();
+  } catch (e) {
+    next(e);
+  }
+};
 
-    let decoded;
+/**
+ * Firebase ID token OR session-scoped caller token.
+ *
+ * This is intentionally only used by POST /api/sessions/:id/turns.
+ * Other routes keep requireAuth so a caller token cannot list sessions,
+ * create notes, escalate, or mutate session status.
+ */
+export const requireAuthOrCallerToken = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const token = getBearerToken(req);
+
     try {
-      decoded = await firebaseAuth.verifyIdToken(token);
-    } catch {
-      throw new ApiError(401, 'UNAUTHORIZED', 'invalid or expired id token');
+      req.user = await verifyFirebaseUser(token);
+      return next();
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 401) throw e;
     }
 
-    const user = await prisma.user.upsert({
-      where: { id: decoded.uid },
-      update: {
-        email: decoded.email ?? undefined,
-        displayName: decoded.name ?? undefined,
-        photoUrl: decoded.picture ?? undefined,
-      },
-      create: {
-        id: decoded.uid,
-        email: decoded.email ?? null,
-        displayName: decoded.name ?? null,
-        photoUrl: decoded.picture ?? null,
-      },
-    });
+    const sessionId = req.params.id;
+    if (!sessionId) {
+      throw new ApiError(400, 'INVALID_INPUT', 'session id required for caller token auth');
+    }
+    const verifiedSessionId = await verifyCallerToken(token, sessionId);
+    if (!verifiedSessionId) {
+      throw new ApiError(401, 'UNAUTHORIZED', 'invalid or expired id token or caller token');
+    }
 
-    req.user = {
-      id: user.id,
-      email: user.email,
-      displayName: user.displayName,
-      role: user.role,
-    };
+    req.callerAuth = { scope: 'caller', sessionId: verifiedSessionId, token };
     next();
   } catch (e) {
     next(e);

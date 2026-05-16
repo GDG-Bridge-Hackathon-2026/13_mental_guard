@@ -35,7 +35,7 @@ export async function mintCallerToken(
   return { token, expires_at: expiresAt.toISOString() };
 }
 
-/** WS 인증 경로에서 사용. 매칭 성공 시 sessionId 반환, 실패 시 null. */
+/** Session-scoped caller auth. Used by WS and narrow REST caller-turn fallback. */
 export async function verifyCallerToken(
   token: string,
   expectedSessionId: string

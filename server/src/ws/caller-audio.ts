@@ -36,7 +36,12 @@ interface ActiveUtterance {
   audioChunks: Buffer[];
   mime: string;
   startedAt: number;
+  lastSeq: number;
+  idleTimer: ReturnType<typeof setTimeout> | null;
 }
+
+const STALE_CHUNK_GUARD_MS = 1000;
+const IDLE_UTTERANCE_TIMEOUT_MS = 30_000;
 
 function langFromHint(hint?: 'ko' | 'ja' | 'auto'): Language {
   return hint === 'ko' ? Language.KO : hint === 'ja' ? Language.JA : Language.AUTO;
@@ -52,9 +57,35 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
   let mime = 'audio/webm';
   let queue: Promise<void> = Promise.resolve();
   let closed = false;
+  let staleChunkGuardUntil = 0;
+  let ignoreAllChunksUntil = 0;
 
   const send = (payload: unknown) => {
     if (!closed && ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
+  };
+
+  const clearIdleTimer = (utterance: ActiveUtterance) => {
+    if (!utterance.idleTimer) return;
+    clearTimeout(utterance.idleTimer);
+    utterance.idleTimer = null;
+  };
+
+  const scheduleIdleCleanup = (utterance: ActiveUtterance) => {
+    clearIdleTimer(utterance);
+    utterance.idleTimer = setTimeout(() => {
+      if (active !== utterance) return;
+      console.warn('[caller-audio] audio.end not received; dropping idle utterance');
+      utterance.stream?.abort();
+      active = null;
+      staleChunkGuardUntil = Date.now() + STALE_CHUNK_GUARD_MS;
+      send({
+        type: 'error',
+        error: {
+          code: 'AUDIO_TIMEOUT',
+          message: 'audio.end not received before idle timeout',
+        },
+      });
+    }, IDLE_UTTERANCE_TIMEOUT_MS);
   };
 
   const openUtterance = (langHint?: 'ko' | 'ja' | 'auto'): ActiveUtterance => {
@@ -65,6 +96,8 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
       audioChunks: [],
       mime,
       startedAt: Date.now(),
+      lastSeq: 0,
+      idleTimer: null,
     };
 
     stream.onPartial((text) => {
@@ -102,10 +135,24 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
 
     if (msg.type === 'audio.chunk') {
       try {
+        if (!Number.isInteger(msg.seq) || msg.seq <= 0 || typeof msg.data !== 'string') {
+          throw new Error('invalid audio chunk');
+        }
+        if (!active && Date.now() < ignoreAllChunksUntil) {
+          send({ type: 'audio.ignored', seq: msg.seq, reason: 'audio.end already received' });
+          return;
+        }
+        if (!active && Date.now() < staleChunkGuardUntil && msg.seq > 1) {
+          send({ type: 'audio.ignored', seq: msg.seq, reason: 'late chunk after audio.end' });
+          return;
+        }
         if (msg.mime_type) mime = msg.mime_type;
         if (!active) active = openUtterance(); // 첫 chunk면 새 발화 시작
         const buf = Buffer.from(msg.data, 'base64');
+        if (buf.length === 0) throw new Error('empty audio chunk');
         active.audioChunks.push(buf);
+        active.lastSeq = Math.max(active.lastSeq, msg.seq);
+        scheduleIdleCleanup(active);
         active.stream?.write(buf);
         send({ type: 'audio.received', seq: msg.seq });
       } catch (e) {
@@ -119,11 +166,14 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
 
     if (msg.type === 'audio.end') {
       if (!active) {
-        send({ type: 'error', error: { code: 'INVALID_INPUT', message: 'no active utterance' } });
+        ignoreAllChunksUntil = Date.now() + STALE_CHUNK_GUARD_MS;
+        send({ type: 'error', error: { code: 'NO_ACTIVE_UTTERANCE', message: 'no active utterance' } });
         return;
       }
       const u = active;
       active = null; // 다음 발화의 chunk는 즉시 새 stream으로
+      clearIdleTimer(u);
+      staleChunkGuardUntil = Date.now() + STALE_CHUNK_GUARD_MS;
 
       const langHint = langFromHint(msg.language_hint);
       const explicitDuration = msg.duration_ms;
@@ -134,6 +184,13 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
           try {
             // GCP stream close + 최종 transcript 수신
             const audio = Buffer.concat(u.audioChunks);
+            if (audio.length === 0) {
+              send({
+                type: 'error',
+                error: { code: 'INVALID_INPUT', message: 'empty utterance audio' },
+              });
+              return;
+            }
             const durationMs = explicitDuration ?? Date.now() - u.startedAt;
             let prerecorded: { text: string; confidence: number | null } | undefined;
 
@@ -181,6 +238,7 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
   const cleanup = () => {
     closed = true;
     if (active) {
+      clearIdleTimer(active);
       active.stream?.abort();
       active = null;
     }

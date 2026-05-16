@@ -12,7 +12,7 @@ import { analyzeTurn } from '../ml/analyze-turn.js';
 import { transcribeAudio } from '../stt.js';
 import { uploadAudio, uploadTranscript } from '../storage.js';
 import { emit } from '../events.js';
-import { toTurnDto } from '../api-dto.js';
+import { toAnalysisDto, toTurnDto } from '../api-dto.js';
 import {
   evaluateThreshold,
   incrementDistribution,
@@ -251,15 +251,17 @@ export async function addCallerTurn(
   recentClassifications.push(analysis.classification);
   const threshold = evaluateThreshold(newCumThreat, recentClassifications);
 
+  const sessionUpdate = {
+    total_turns: seq,
+    cumulative_threat: newCumThreat,
+    classification_distribution: newDistribution,
+    threshold_triggered: threshold,
+  };
+
   await emit(sessionId, EventType.CAPTION_FINAL, {
     turn: toTurnDto(turn),
-    analysis: {
-      threat_level: analysis.metrics.threat_level,
-      emotion: analysis.metrics.emotion,
-      core_demand: analysis.summary.core_demand,
-      classification: analysis.classification,
-      recommended_action: analysis.recommended_action,
-    },
+    analysis: toAnalysisDto(analysisRow),
+    session_update: sessionUpdate,
   });
   await emit(sessionId, EventType.RISK_UPDATE, {
     cumulative_threat: newCumThreat,
@@ -283,12 +285,7 @@ export async function addCallerTurn(
   return {
     turn,
     analysis: analysisRow,
-    session_update: {
-      total_turns: seq,
-      cumulative_threat: newCumThreat,
-      classification_distribution: newDistribution,
-      threshold_triggered: threshold,
-    },
+    session_update: sessionUpdate,
   };
 }
 

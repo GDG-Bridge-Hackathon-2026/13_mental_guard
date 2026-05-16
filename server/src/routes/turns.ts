@@ -1,6 +1,6 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import multer from 'multer';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuthOrCallerToken } from '../middleware/auth.js';
 import { loadSession } from '../middleware/session-access.js';
 import { ah } from '../utils/async-handler.js';
 import { CreateTurnTextSchema, CreateTurnVoiceSchema } from '../schemas.js';
@@ -16,10 +16,17 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 },
 });
 
+function assertCallerTokenTurnAllowed(req: Request, speaker: Speaker) {
+  if (!req.callerAuth) return;
+  if (speaker !== Speaker.CALLER) {
+    throw new ApiError(403, 'FORBIDDEN', 'caller token can only create caller turns');
+  }
+}
+
 // POST /api/sessions/:id/turns
 turnsRouter.post(
   '/sessions/:id/turns',
-  requireAuth,
+  requireAuthOrCallerToken,
   loadSession,
   upload.single('audio'),
   ah(async (req, res) => {
@@ -33,6 +40,7 @@ turnsRouter.post(
         duration_ms: req.body.duration_ms,
       });
       if (!req.file) throw new ApiError(400, 'INVALID_INPUT', 'audio file required');
+      assertCallerTokenTurnAllowed(req, parsed.speaker);
 
       if (parsed.speaker === Speaker.AGENT) {
         const result = await addAgentTurn(req.params.id, {
@@ -62,6 +70,7 @@ turnsRouter.post(
       }
     } else {
       const parsed = CreateTurnTextSchema.parse(req.body);
+      assertCallerTokenTurnAllowed(req, parsed.speaker);
       if (parsed.speaker === Speaker.AGENT) {
         const result = await addAgentTurn(req.params.id, {
           type: 'text',
