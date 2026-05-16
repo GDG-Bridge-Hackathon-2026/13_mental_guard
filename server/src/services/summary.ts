@@ -44,17 +44,20 @@ export async function endSession(sessionId: string): Promise<SessionSummary> {
     throw new ApiError(400, 'INVALID_INPUT', 'cannot end session with zero turns');
   }
 
-  const mlSummary = await mlSummarize({
-    cumulative_threat: session.cumulativeThreat,
-    language: session.language,
-    turns: session.turns.map((t) => ({
-      seq: t.seq,
-      speaker: t.speaker,
-      text: t.rawText,
-      classification: t.analysis?.classification,
-      threat_level: (t.analysis?.metrics as AnalysisMetrics | undefined)?.threat_level,
-    })),
-  });
+  const mlSummary = await mlSummarize(
+    {
+      cumulative_threat: session.cumulativeThreat,
+      language: session.language,
+      turns: session.turns.map((t) => ({
+        seq: t.seq,
+        speaker: t.speaker,
+        text: t.rawText,
+        classification: t.analysis?.classification,
+        threat_level: (t.analysis?.metrics as AnalysisMetrics | undefined)?.threat_level,
+      })),
+    },
+    sessionId
+  );
 
   const legalBasis = mlSummary.legal_basis_keys
     .map((k) => LEGAL_BASIS_MAP[k])

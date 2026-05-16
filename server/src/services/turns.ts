@@ -126,12 +126,16 @@ export async function addCallerTurn(
     .map((t) => (t.analysis?.metrics as AnalysisMetrics | undefined)?.threat_level)
     .filter((x): x is number => typeof x === 'number');
 
-  const analysis = await analyzeTurn(rawText, {
-    recent_threats: recentThreats,
-    cumulative_threat: session.cumulativeThreat,
-    total_turns: session.totalTurns,
-    language: session.language,
-  });
+  const analysis = await analyzeTurn(
+    rawText,
+    {
+      recent_threats: recentThreats,
+      cumulative_threat: session.cumulativeThreat,
+      total_turns: session.totalTurns,
+      language: session.language,
+    },
+    sessionId
+  );
 
   // 누적 통계
   const distribution =

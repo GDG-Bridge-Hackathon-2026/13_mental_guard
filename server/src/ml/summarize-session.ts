@@ -30,7 +30,10 @@ export interface SummarizeInput {
  *   body: SummarizeInput
  *   response: SummarizeResponseSchema
  */
-export async function summarizeSession(input: SummarizeInput): Promise<SummarizeResponse> {
+export async function summarizeSession(
+  input: SummarizeInput,
+  sessionId: string
+): Promise<SummarizeResponse> {
   if (!env.ML_SERVICE_URL) {
     throw new ApiError(500, 'LLM_FAILED', 'ML_SERVICE_URL not configured');
   }
@@ -39,7 +42,10 @@ export async function summarizeSession(input: SummarizeInput): Promise<Summarize
   try {
     const res = await fetch(`${env.ML_SERVICE_URL}/summarize`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-session-id': sessionId,
+      },
       body: JSON.stringify(input),
       signal: controller.signal,
     });

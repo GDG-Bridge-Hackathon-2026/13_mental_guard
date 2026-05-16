@@ -21,7 +21,10 @@ export interface RegenerateInput {
  *   body: RegenerateInput
  *   response: { script: string }
  */
-export async function regenerateScript(input: RegenerateInput): Promise<string> {
+export async function regenerateScript(
+  input: RegenerateInput,
+  sessionId: string
+): Promise<string> {
   if (!env.ML_SERVICE_URL) {
     throw new ApiError(500, 'LLM_FAILED', 'ML_SERVICE_URL not configured');
   }
@@ -30,7 +33,10 @@ export async function regenerateScript(input: RegenerateInput): Promise<string> 
   try {
     const res = await fetch(`${env.ML_SERVICE_URL}/regenerate-script`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-session-id': sessionId,
+      },
       body: JSON.stringify(input),
       signal: controller.signal,
     });
