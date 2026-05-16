@@ -1,89 +1,119 @@
 import os
 from enum import Enum
-from typing import List
+from typing import Optional
 from google import genai
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+from google.genai.types import GenerateContentConfig
+
+import prompt_template
 
 app = FastAPI()
 
 
 class Emotion(str, Enum):
-    분노 = "분노"
-    좌절 = "좌절"
-    냉소 = "냉소"
-    혼란 = "혼란"
-    평정 = "평정"
+    ANGER = "ANGER"
+    FRUSTRATION = "FRUSTRATION"
+    CYNICISM = "CYNICISM"
+    CONFUSION = "CONFUSION"
+    CALM = "CALM"
+
+class Trend(str, Enum):
+    UP = "UP"
+    DOWN = "DOWN"
+    STABLE = "STABLE"
 
 
-class CallerSignals(BaseModel):
-    emotion_keywords: List[Emotion]
-    speech_feature_keywords: List[str]
+class Intent(str, Enum):
+    LEGITIMATE_COMPLAINT = "LEGITIMATE_COMPLAINT"
+    VENT = "VENT"
+    THREAT = "THREAT"
+    INSULT = "INSULT"
+    INQUIRY = "INQUIRY"
 
 
-class Safety(BaseModel):
-    risk_level: int
-    risk_reason: str
-    risk_keywords: List[str]
+class Classification(str, Enum):
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+    E = "E"
 
+class RecommendedActionLevel(str, Enum):
+    NORMAL = "NORMAL"
+    CAUTION = "CAUTION"
+    ESCALATE = "ESCALATE"
+    TERMINATE_ALLOWED = "TERMINATE_ALLOWED"
+    LEGAL_ACTION = "LEGAL_ACTION"
+
+class Metrics(BaseModel):
+    threat_level: int = Field(..., ge=1, le=5)
+    emotion: Emotion
+    factual_ratio: int = Field(..., ge=0, le=100)
+    repetition_score: int = Field(..., ge=0, le=100)
+    trend: Trend
+
+
+class Summary(BaseModel):
+    core_demand: str
+    intent: Intent
+    risk_keywords: list[str]
+
+class RecommendedAction(BaseModel):
+    level: RecommendedActionLevel
+    # scripts: dict[str, str]
+    legal_basis: Optional[str] = None
 
 class AnalysisResponse(BaseModel):
-    refined_text: str
-    core_demands: List[str]
-    caller_signals: CallerSignals
-    recommended_response: str
-    safety: Safety
-    confidence: float
+    refined: str
+    metrics: Metrics
+    summary: Summary
+    classification: Classification
+    preserved_facts: list[str]
+    removed_expressions: list[str]
+    abuse_types: list[str]
+    confidence: float = Field(..., ge=0, le=1)
+    recommended_action: RecommendedAction
 
+
+class Context(BaseModel):
+    recent_threats: list[int]
+    cumulative_threat: float
+    total_turns: int
+    language: str
 
 class InputRequest(BaseModel):
     text: str
+    context: Context
 
 
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze(req: InputRequest):
-    text = req.text
-
     client = genai.Client(
         api_key=os.getenv("GEMINI_API_KEY")
     )
 
+    content = prompt_template.prompt_template.format(INPUT_JSON=req)
+
     response = client.models.generate_content(
-        model=os.getenv("MODEL_NAME"), contents="Explain how AI works in a few words"
+        model=os.getenv("MODEL_NAME"), contents=content, 
+        config=GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=AnalysisResponse,
+        )
     )
-    print(response.text)
+    result = AnalysisResponse.model_validate_json(response.text)
+    return result
 
-    # TODO:
-    # Here you can replace with actual LLM inference logic
-
-    return AnalysisResponse(
-        refined_text=response.text, # "민원인은 이전 문의 이후에도 처리가 지연되었으며, 처리 현황 확인과 상급자 연결을 요청하고 있습니다.",
-        core_demands=[
-            "처리 지연 사유 확인 요청",
-            "상급자 연결 요청",
-        ],
-        caller_signals=CallerSignals(
-            emotion_keywords=[Emotion.좌절],
-            speech_feature_keywords=[
-                "반복 문의",
-                "처리 지연 강조",
-                "상급자 연결 요구",
-            ],
-        ),
-        recommended_response="접수번호를 먼저 확인한 뒤 처리 현황을 안내드리고, 필요 시 상급자 연결 절차를 도와드리겠습니다.",
-        safety=Safety(
-            risk_level=2,
-            risk_reason="처리 지연에 대한 불만은 있으나 직접적인 위협이나 폭언은 없습니다.",
-            risk_keywords=[],
-        ),
-        confidence=0.88,
-    )
-
-
-# Run:
-# uvicorn main:app --reload
-#
 # Example request:
-# curl -X POST http://127.0.0.1:5555/analyze \
+# curl -X POST "http://127.0.0.1:5555/1/analyze" \
 #   -H "Content-Type: application/json" \
-#   -d '{"text":"지난주에도 문의했고 어제도 다시 전화했는데 아직도 처리가 안 됐잖아요."}'
+#   -d '{
+#     "text": "지난주에도 문의했는데 아직 처리가 안 됐습니다.",
+#     "context": {
+#       "recent_threats": [2, 3, 3, 4],
+#       "cumulative_threat": 3.0,
+#       "total_turns": 4,
+#       "language": "KO"
+#     }
+#   }'
