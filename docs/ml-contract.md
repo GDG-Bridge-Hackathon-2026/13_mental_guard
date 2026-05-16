@@ -40,7 +40,7 @@ BE가 호출하는 ML 서비스의 endpoint 명세.
 | `Classification` | `A` `B` `C` `D` `E` |
 | `ActionLevel` | `NORMAL` `CAUTION` `ESCALATE` `TERMINATE_ALLOWED` `LEGAL_ACTION` |
 | `Speaker` | `CALLER` `AGENT` |
-| `Language` | `KO` `JA` `AUTO` |
+| `Language` | `KO` `JA` `EN` `AUTO` |
 | `Tone` (한국어 고정) | `공감` `단호` `위로` |
 
 ---
@@ -74,7 +74,7 @@ BE가 호출하는 ML 서비스의 endpoint 명세.
         },
         "cumulative_threat": { "type": "number" },
         "total_turns": { "type": "integer", "minimum": 0 },
-        "language": { "type": "string", "enum": ["KO", "JA", "AUTO"] }
+        "language": { "type": "string", "enum": ["KO", "JA", "EN", "AUTO"] }
       }
     }
   }

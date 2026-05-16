@@ -16,7 +16,13 @@ Critical Rules:
 - The output language MUST match `language`.
   - `KO` -> Korean
   - `JA` -> Japanese
+  - `EN` -> English
   - otherwise infer from conversation
+- For `EN`, every free-text value MUST be written in English:
+  `core_demands` and `agent_response_summary`.
+- Keep JSON field names and enum/code values exactly as required by the schema.
+  Do not translate object keys, classification values, action values, or
+  legal basis keys.
 - Never invent facts not implied by the conversation.
 - Focus on operationally useful summaries.
 

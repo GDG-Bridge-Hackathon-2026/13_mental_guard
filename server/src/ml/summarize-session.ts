@@ -38,7 +38,7 @@ export async function summarizeSession(
   // ML 서비스 미설정 → 데모 fallback 반환 (analyzeTurn과 동일 정책)
   if (!env.ML_SERVICE_URL) {
     console.warn('[summarizeSession] ML_SERVICE_URL missing, using defaultSummary');
-    return defaultSummary();
+    return defaultSummary(input.language);
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), env.ML_SERVICE_TIMEOUT_MS);
@@ -54,18 +54,18 @@ export async function summarizeSession(
     });
     if (!res.ok) {
       console.warn(`[summarizeSession] ml /summarize ${res.status}, using defaultSummary`);
-      return defaultSummary();
+      return defaultSummary(input.language);
     }
     const parsed = SummarizeResponseSchema.safeParse(await res.json());
     if (!parsed.success) {
       console.warn('[summarizeSession] invalid response shape, using defaultSummary');
-      return defaultSummary();
+      return defaultSummary(input.language);
     }
     return parsed.data;
   } catch (e) {
     if (e instanceof ApiError) throw e;
     console.warn('[summarizeSession] failed, using defaultSummary', String(e));
-    return defaultSummary();
+    return defaultSummary(input.language);
   } finally {
     clearTimeout(timer);
   }

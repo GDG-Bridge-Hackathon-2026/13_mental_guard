@@ -70,10 +70,10 @@ export async function analyzeTurn(
 
     // 2회 모두 실패 → fallback (예외 던지지 않음)
     console.warn('[analyzeTurn] LLM_INVALID_JSON, falling back', parsed2.error.message);
-    return defaultAnalysis(text);
+    return defaultAnalysis(text, ctx.language);
   } catch (e) {
     // 네트워크/타임아웃 등 — fallback 반환 (호출자가 그대로 진행)
     console.warn('[analyzeTurn] LLM_FAILED, falling back', String(e));
-    return defaultAnalysis(text);
+    return defaultAnalysis(text, ctx.language);
   }
 }

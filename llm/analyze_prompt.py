@@ -16,7 +16,14 @@ Critical Rules:
 - The output language MUST match `context.language`.
   - `KO` -> Korean
   - `JA` -> Japanese
+  - `EN` -> English
   - `AUTO` -> infer from input text
+- For `EN`, every free-text value MUST be written in English:
+  `refined`, `summary.core_demand`, `summary.risk_keywords`,
+  `preserved_facts`, `removed_expressions`, `abuse_types`,
+  `recommended_action.scripts` values, and `recommended_action.legal_basis`.
+- Keep JSON field names, enum values, and the fixed `recommended_action.scripts`
+  object keys exactly as required by the schema. Do not translate object keys.
 - Preserve factual meaning.
 - Rewrite emotional/aggressive wording into neutral professional wording.
 - Never invent facts not implied by the input.

@@ -1,12 +1,51 @@
-import { Classification, ActionLevel } from '@prisma/client';
+import { Classification, ActionLevel, Language } from '@prisma/client';
 import { Emotion, Intent, Trend } from './enums.js';
 import type { AnalysisPayload } from './schemas.js';
+
+function isEnglishLanguage(language?: Language | string): boolean {
+  return language === Language.EN || language === 'EN' || language === 'en';
+}
 
 /**
  * LLM이 1회 재시도 후에도 실패할 때 사용하는 기본 Analysis.
  * 명세 §12.4 참조.
  */
-export function defaultAnalysis(rawText: string): AnalysisPayload {
+export function defaultAnalysis(
+  rawText: string,
+  language: Language | string = Language.KO
+): AnalysisPayload {
+  if (isEnglishLanguage(language)) {
+    return {
+      refined: 'Unable to generate a refined result. Please review the original text.',
+      metrics: {
+        threat_level: 1,
+        emotion: Emotion.CONFUSION,
+        factual_ratio: 0,
+        repetition_score: 0,
+        trend: Trend.STABLE,
+      },
+      summary: {
+        core_demand: rawText.slice(0, 100) || 'Analysis failed',
+        intent: Intent.INQUIRY,
+        risk_keywords: [],
+      },
+      classification: Classification.A,
+      preserved_facts: [],
+      removed_expressions: [],
+      abuse_types: [],
+      confidence: 0,
+      recommended_action: {
+        level: ActionLevel.NORMAL,
+        scripts: {
+          공감: 'I will review the details again.',
+          단호: 'I will verify the details again to ensure accurate handling.',
+          위로: 'I will check this and guide you through the next step.',
+        },
+        legal_basis: null,
+      },
+    };
+  }
+
   return {
     refined: '정제 결과를 생성하지 못했습니다. 원문 확인이 필요합니다.',
     metrics: {
@@ -45,7 +84,17 @@ export function defaultAnalysis(rawText: string): AnalysisPayload {
  * 반환 타입은 의도적으로 명시하지 않음 — ml/summarize-session.ts의
  * `SummarizeResponse` 와 순환 import를 피하기 위함. 구조적 호환성으로 통과.
  */
-export function defaultSummary() {
+export function defaultSummary(language: Language | string = Language.KO) {
+  if (isEnglishLanguage(language)) {
+    return {
+      final_classification: Classification.B,
+      final_action: ActionLevel.CAUTION,
+      core_demands: ['Analysis unavailable because the ML service is inactive'] as string[],
+      agent_response_summary: [] as string[],
+      legal_basis_keys: [] as string[],
+    };
+  }
+
   return {
     final_classification: Classification.B,
     final_action: ActionLevel.CAUTION,
