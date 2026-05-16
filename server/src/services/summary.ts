@@ -24,7 +24,10 @@ const LEGAL_BASIS_MAP: Record<string, string> = {
   JP_KASAHARA_MANUAL_CH4: '厚生労働省 カスタマーハラスメント対策企業マニュアル 第4章',
 };
 
-export async function endSession(sessionId: string): Promise<SessionSummary> {
+export async function endSession(
+  sessionId: string,
+  options: { reason?: 'normal' | 'terminated' | 'failed' } = {}
+): Promise<SessionSummary> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
     include: {
@@ -115,7 +118,10 @@ export async function endSession(sessionId: string): Promise<SessionSummary> {
     },
   });
 
-  await emit(sessionId, EventType.SESSION_ENDED, { summary_id: session.id });
+  await emit(sessionId, EventType.SESSION_ENDED, {
+    summary_id: session.id,
+    reason: options.reason ?? 'normal',
+  });
 
   return summary;
 }

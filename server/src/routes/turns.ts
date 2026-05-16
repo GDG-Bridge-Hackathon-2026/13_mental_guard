@@ -7,6 +7,7 @@ import { CreateTurnTextSchema, CreateTurnVoiceSchema } from '../schemas.js';
 import { addCallerTurn, addAgentTurn } from '../services/turns.js';
 import { ApiError } from '../errors.js';
 import { Speaker } from '@prisma/client';
+import { toAnalysisDto, toTurnDto } from '../api-dto.js';
 
 export const turnsRouter = Router();
 
@@ -40,7 +41,11 @@ turnsRouter.post(
           mime: req.file.mimetype,
           duration_ms: parsed.duration_ms,
         });
-        res.json(result);
+        res.json({
+          turn: toTurnDto(result.turn),
+          delivered_to_caller: result.delivered_to_caller,
+          playback_event_id: result.playback_event_id,
+        });
       } else {
         const result = await addCallerTurn(req.params.id, {
           type: 'voice',
@@ -49,7 +54,11 @@ turnsRouter.post(
           language_hint: parsed.language_hint,
           duration_ms: parsed.duration_ms,
         });
-        res.json(result);
+        res.json({
+          turn: toTurnDto(result.turn),
+          analysis: toAnalysisDto(result.analysis),
+          session_update: result.session_update,
+        });
       }
     } else {
       const parsed = CreateTurnTextSchema.parse(req.body);
@@ -58,14 +67,22 @@ turnsRouter.post(
           type: 'text',
           content: parsed.content,
         });
-        res.json(result);
+        res.json({
+          turn: toTurnDto(result.turn),
+          delivered_to_caller: result.delivered_to_caller,
+          playback_event_id: result.playback_event_id,
+        });
       } else {
         const result = await addCallerTurn(req.params.id, {
           type: 'text',
           content: parsed.content,
           language_hint: parsed.language_hint,
         });
-        res.json(result);
+        res.json({
+          turn: toTurnDto(result.turn),
+          analysis: toAnalysisDto(result.analysis),
+          session_update: result.session_update,
+        });
       }
     }
   })

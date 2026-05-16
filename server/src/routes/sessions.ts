@@ -17,6 +17,7 @@ import {
 import { endSession, getCachedSummary } from '../services/summary.js';
 import { listEvents } from '../services/events.js';
 import { ApiError } from '../errors.js';
+import { toAnalysisDto, toSessionDto, toTurnDto } from '../api-dto.js';
 
 export const sessionsRouter = Router();
 
@@ -38,7 +39,7 @@ sessionsRouter.post('/', requireAuth, ah(async (req, res) => {
     mode: body.mode,
     metadata: body.metadata,
   });
-  res.status(201).json({ session });
+  res.status(201).json({ session: toSessionDto(session) });
 }));
 
 // GET /api/sessions
@@ -63,7 +64,7 @@ sessionsRouter.get('/', requireAuth, ah(async (req, res) => {
     sortField,
     sortDir,
   });
-  res.json({ sessions, total, limit: q.limit, offset: q.offset });
+  res.json({ sessions: sessions.map(toSessionDto), total, limit: q.limit, offset: q.offset });
 }));
 
 // GET /api/sessions/:id
@@ -72,20 +73,24 @@ sessionsRouter.get('/:id', requireAuth, loadSession, ah(async (req, res) => {
   const { turns, ...session } = s;
   const turnsOnly = turns.map(({ analysis, ...t }) => t);
   const analyses = turns.map((t) => t.analysis).filter((a) => a !== null);
-  res.json({ session, turns: turnsOnly, analyses });
+  res.json({
+    session: toSessionDto(session),
+    turns: turnsOnly.map(toTurnDto),
+    analyses: analyses.map(toAnalysisDto),
+  });
 }));
 
 // PATCH /api/sessions/:id/status
 sessionsRouter.patch('/:id/status', requireAuth, loadSession, ah(async (req, res) => {
   const body = PatchStatusSchema.parse(req.body);
   const session = await updateStatus(req.params.id, body.status);
-  res.json({ session });
+  res.json({ session: toSessionDto(session) });
 }));
 
 // PATCH /api/sessions/:id/end
 sessionsRouter.patch('/:id/end', requireAuth, loadSession, ah(async (req, res) => {
-  EndSessionSchema.parse(req.body ?? {});
-  const summary = await endSession(req.params.id);
+  const body = EndSessionSchema.parse(req.body ?? {});
+  const summary = await endSession(req.params.id, { reason: body.reason });
   res.json({ summary });
 }));
 

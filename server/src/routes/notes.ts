@@ -4,6 +4,7 @@ import { loadSession } from '../middleware/session-access.js';
 import { ah } from '../utils/async-handler.js';
 import { CreateNoteSchema } from '../schemas.js';
 import { createNote, listNotes } from '../services/notes.js';
+import { toNoteDto } from '../api-dto.js';
 
 export const notesRouter = Router();
 
@@ -30,6 +31,6 @@ notesRouter.get(
   loadSession,
   ah(async (req, res) => {
     const notes = await listNotes(req.params.id);
-    res.json({ notes });
+    res.json({ notes: notes.map(toNoteDto) });
   })
 );

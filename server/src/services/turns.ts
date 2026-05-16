@@ -12,6 +12,7 @@ import { analyzeTurn } from '../ml/analyze-turn.js';
 import { transcribeAudio } from '../stt.js';
 import { uploadAudio, uploadTranscript } from '../storage.js';
 import { emit } from '../events.js';
+import { toTurnDto } from '../api-dto.js';
 import {
   evaluateThreshold,
   incrementDistribution,
@@ -251,7 +252,7 @@ export async function addCallerTurn(
   const threshold = evaluateThreshold(newCumThreat, recentClassifications);
 
   await emit(sessionId, EventType.CAPTION_FINAL, {
-    turn,
+    turn: toTurnDto(turn),
     analysis: {
       threat_level: analysis.metrics.threat_level,
       emotion: analysis.metrics.emotion,

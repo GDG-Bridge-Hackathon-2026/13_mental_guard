@@ -192,21 +192,21 @@ export const SessionEventOutput = z
 export const NoteOutput = z
   .object({
     id: z.string(),
-    sessionId: z.string(),
-    agentId: z.string(),
+    session_id: z.string(),
+    agent_id: z.string(),
     content: z.string(),
-    createdAt: z.string().datetime(),
+    created_at: z.string().datetime(),
   })
   .openapi('Note');
 
 export const EscalationOutput = z
   .object({
     id: z.string(),
-    sessionId: z.string(),
+    session_id: z.string(),
     type: EscalationTypeStr,
     reason: z.string().nullable(),
-    requestedBy: z.string(),
-    createdAt: z.string().datetime(),
+    requested_by: z.string(),
+    created_at: z.string().datetime(),
   })
   .openapi('Escalation');
 
@@ -238,11 +238,38 @@ export const AgentTurnVoiceMultipart = z
   })
   .openapi('AgentTurnVoiceMultipart');
 
-// ── input schemas: src/schemas.ts 재활용, 이름만 부여 ───────────────────
-export const CreateSessionInput = S.CreateSessionSchema.openapi('CreateSessionInput');
-export const PatchStatusInput = S.PatchStatusSchema.openapi('PatchStatusInput');
-export const EndSessionInput = S.EndSessionSchema.openapi('EndSessionInput');
-export const CreateTurnTextInput = S.CreateTurnTextSchema.openapi('CreateTurnTextInput');
+// ── public input schemas ────────────────────────────────────────────────
+export const CreateSessionInput = z
+  .object({
+    caller_id: z.string().nullable().optional(),
+    channel: ChannelStr.default('voice'),
+    language: LanguageStr.default('auto'),
+    mode: SessionModeStr.default('caption_relay'),
+    metadata: z.record(z.string()).optional(),
+  })
+  .openapi('CreateSessionInput');
+
+export const PatchStatusInput = z
+  .object({
+    status: SessionStatusStr,
+  })
+  .openapi('PatchStatusInput');
+
+export const EndSessionInput = z
+  .object({
+    reason: z.enum(['normal', 'terminated', 'failed']).default('normal'),
+  })
+  .openapi('EndSessionInput');
+
+export const CreateTurnTextInput = z
+  .object({
+    speaker: SpeakerStr.default('caller'),
+    type: z.literal('text'),
+    content: z.string().min(1).max(5000),
+    language_hint: LanguageStr.default('auto'),
+  })
+  .openapi('CreateTurnTextInput');
+
 export const CreateAgentTurnTextInput = S.CreateAgentTurnTextSchema.openapi('CreateAgentTurnTextInput');
 export const RegenerateScriptInput = S.RegenerateScriptSchema.openapi('RegenerateScriptInput');
 export const MintCallerTokenSchema = S.MintCallerTokenSchema.openapi('MintCallerTokenInput');

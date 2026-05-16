@@ -6,6 +6,7 @@ import { ah } from '../utils/async-handler.js';
 import { CreateAgentTurnTextSchema, CreateAgentTurnVoiceSchema } from '../schemas.js';
 import { addAgentTurn } from '../services/turns.js';
 import { ApiError } from '../errors.js';
+import { toTurnDto } from '../api-dto.js';
 
 export const agentTurnsRouter = Router();
 
@@ -30,14 +31,22 @@ agentTurnsRouter.post(
         mime: req.file.mimetype,
         duration_ms: parsed.duration_ms,
       });
-      res.json(result);
+      res.json({
+        turn: toTurnDto(result.turn),
+        delivered_to_caller: result.delivered_to_caller,
+        playback_event_id: result.playback_event_id,
+      });
     } else {
       const parsed = CreateAgentTurnTextSchema.parse(req.body);
       const result = await addAgentTurn(req.params.id, {
         type: 'text',
         content: parsed.content,
       });
-      res.json(result);
+      res.json({
+        turn: toTurnDto(result.turn),
+        delivered_to_caller: result.delivered_to_caller,
+        playback_event_id: result.playback_event_id,
+      });
     }
   })
 );

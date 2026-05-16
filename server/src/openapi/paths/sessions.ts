@@ -45,7 +45,7 @@ export function registerSessions(registry: OpenAPIRegistry) {
         to: z.string().datetime({ offset: true }).optional(),
         classification: z.enum(['A', 'B', 'C', 'D', 'E']).optional(),
         status: z
-          .enum(['CREATED', 'WAITING', 'ACTIVE', 'PAUSED', 'ENDING', 'ENDED', 'FAILED'])
+          .enum(['created', 'waiting', 'active', 'paused', 'ending', 'ended', 'failed'])
           .optional(),
         min_threat: z.coerce.number().optional(),
         limit: z.coerce.number().int().min(1).max(100).default(20),

@@ -4,6 +4,7 @@ import { loadSession } from '../middleware/session-access.js';
 import { ah } from '../utils/async-handler.js';
 import { CreateEscalationSchema } from '../schemas.js';
 import { createEscalation, listEscalations } from '../services/escalations.js';
+import { toEscalationDto } from '../api-dto.js';
 
 export const escalationsRouter = Router();
 
@@ -31,6 +32,6 @@ escalationsRouter.get(
   loadSession,
   ah(async (req, res) => {
     const escalations = await listEscalations(req.params.id);
-    res.json({ escalations });
+    res.json({ escalations: escalations.map(toEscalationDto) });
   })
 );

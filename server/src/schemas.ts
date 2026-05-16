@@ -13,39 +13,43 @@ import { Emotion, Intent, Trend } from './enums.js';
 
 // ── Requests ────────────────────────────────────────────────────────────────
 
+const normalizeEnum = (value: unknown) =>
+  typeof value === 'string' ? value.trim().toUpperCase() : value;
+
+const enumInput = <T extends Record<string, string>>(values: T) =>
+  z.preprocess(normalizeEnum, z.nativeEnum(values));
+
 export const CreateSessionSchema = z.object({
   agent_id: z.string().optional(), // 보통 req.user.id로 덮어씀
   caller_id: z.string().nullable().optional(),
-  channel: z.nativeEnum(Channel).default(Channel.VOICE),
-  language: z.nativeEnum(Language).default(Language.AUTO),
-  mode: z.nativeEnum(SessionMode).default(SessionMode.CAPTION_RELAY),
+  channel: enumInput(Channel).default(Channel.VOICE),
+  language: enumInput(Language).default(Language.AUTO),
+  mode: enumInput(SessionMode).default(SessionMode.CAPTION_RELAY),
   metadata: z.record(z.string()).optional(),
 });
 export type CreateSessionInput = z.infer<typeof CreateSessionSchema>;
 
 export const PatchStatusSchema = z.object({
-  status: z.nativeEnum(SessionStatus),
+  status: enumInput(SessionStatus),
 });
 
 export const EndSessionSchema = z.object({
-  generate_summary: z.boolean().default(true),
-  save_audio: z.boolean().default(true),
   reason: z.enum(['normal', 'terminated', 'failed']).default('normal'),
 });
 
 // /turns — speaker 명시 (caller 또는 agent)
 export const CreateTurnTextSchema = z.object({
-  speaker: z.nativeEnum(Speaker).default(Speaker.CALLER),
+  speaker: enumInput(Speaker).default(Speaker.CALLER),
   type: z.literal('text'),
   content: z.string().min(1).max(5000),
-  language_hint: z.nativeEnum(Language).default(Language.AUTO),
+  language_hint: enumInput(Language).default(Language.AUTO),
 });
 export type CreateTurnTextInput = z.infer<typeof CreateTurnTextSchema>;
 
 export const CreateTurnVoiceSchema = z.object({
-  speaker: z.nativeEnum(Speaker).default(Speaker.CALLER),
+  speaker: enumInput(Speaker).default(Speaker.CALLER),
   type: z.literal('voice'),
-  language_hint: z.nativeEnum(Language).default(Language.AUTO),
+  language_hint: enumInput(Language).default(Language.AUTO),
   duration_ms: z.coerce.number().int().nonnegative().optional(),
 });
 export type CreateTurnVoiceInput = z.infer<typeof CreateTurnVoiceSchema>;
@@ -74,8 +78,8 @@ export const ListSessionsQuerySchema = z.object({
   agent_id: z.string().optional(),
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
-  classification: z.nativeEnum(Classification).optional(),
-  status: z.nativeEnum(SessionStatus).optional(),
+  classification: enumInput(Classification).optional(),
+  status: enumInput(SessionStatus).optional(),
   min_threat: z.coerce.number().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().nonnegative().default(0),
@@ -95,7 +99,7 @@ export const CreateNoteSchema = z.object({
 });
 
 export const CreateEscalationSchema = z.object({
-  type: z.nativeEnum(EscalationType),
+  type: enumInput(EscalationType),
   reason: z.string().max(2000).optional(),
 });
 
