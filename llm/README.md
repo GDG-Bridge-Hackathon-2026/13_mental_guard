@@ -36,6 +36,14 @@ curl -X POST "http://127.0.0.1:5555/analyze" \
   "removed_expressions":[],
   "abuse_types":[],
   "confidence":0.86,
-  "recommended_action":{"level":"CAUTION","legal_basis":null}
+  "recommended_action":{
+    "level":"CAUTION",
+    "scripts":{
+      "empathy":"불편을 겪으신 점을 확인했습니다. 접수 이력을 먼저 확인해보겠습니다.",
+      "firm":"정확한 확인을 위해 접수번호와 문의 일자를 확인하겠습니다.",
+      "comfort":"오래 기다리셔서 답답하셨을 것 같습니다. 처리 현황을 확인해드리겠습니다."
+    },
+    "legal_basis":null
+  }
 }
 ``` 

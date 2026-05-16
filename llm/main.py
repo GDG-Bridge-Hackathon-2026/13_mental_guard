@@ -53,15 +53,19 @@ class Metrics(BaseModel):
     repetition_score: int = Field(..., ge=0, le=100)
     trend: Trend
 
-
 class Summary(BaseModel):
     core_demand: str
     intent: Intent
     risk_keywords: list[str]
 
+class Scripts(BaseModel):
+    empathy: str
+    firm: str
+    comfort: str
+
 class RecommendedAction(BaseModel):
     level: RecommendedActionLevel
-    # scripts: dict[str, str]
+    scripts: Scripts
     legal_basis: Optional[str] = None
 
 class AnalysisResponse(BaseModel):
@@ -75,7 +79,6 @@ class AnalysisResponse(BaseModel):
     confidence: float = Field(..., ge=0, le=1)
     recommended_action: RecommendedAction
 
-
 class Context(BaseModel):
     recent_threats: list[int]
     cumulative_threat: float
@@ -85,7 +88,6 @@ class Context(BaseModel):
 class InputRequest(BaseModel):
     text: str
     context: Context
-
 
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze(req: InputRequest):
