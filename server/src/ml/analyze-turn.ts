@@ -17,7 +17,11 @@ export interface AnalyzeContext {
  *   body: { text: string, context: AnalyzeContext }
  *   response 200: AnalysisSchema 형태
  */
-async function callAnalyze(text: string, ctx: AnalyzeContext): Promise<unknown> {
+async function callAnalyze(
+  text: string,
+  ctx: AnalyzeContext,
+  sessionId: string
+): Promise<unknown> {
   if (!env.ML_SERVICE_URL) {
     throw new ApiError(500, 'LLM_FAILED', 'ML_SERVICE_URL not configured');
   }
@@ -26,7 +30,10 @@ async function callAnalyze(text: string, ctx: AnalyzeContext): Promise<unknown> 
   try {
     const res = await fetch(`${env.ML_SERVICE_URL}/analyze`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-session-id': sessionId,
+      },
       body: JSON.stringify({ text, context: ctx }),
       signal: controller.signal,
     });
@@ -48,15 +55,16 @@ async function callAnalyze(text: string, ctx: AnalyzeContext): Promise<unknown> 
  */
 export async function analyzeTurn(
   text: string,
-  ctx: AnalyzeContext
+  ctx: AnalyzeContext,
+  sessionId: string
 ): Promise<AnalysisPayload> {
   try {
-    const raw = await callAnalyze(text, ctx);
+    const raw = await callAnalyze(text, ctx, sessionId);
     const parsed = AnalysisSchema.safeParse(raw);
     if (parsed.success) return parsed.data;
 
     // JSON 형태 오류 → 1회 재시도
-    const raw2 = await callAnalyze(text, ctx);
+    const raw2 = await callAnalyze(text, ctx, sessionId);
     const parsed2 = AnalysisSchema.safeParse(raw2);
     if (parsed2.success) return parsed2.data;
 

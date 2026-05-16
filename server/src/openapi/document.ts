@@ -25,7 +25,7 @@ export function buildOpenApiDocument() {
   return generator.generateDocument({
     openapi: '3.0.3',
     info: {
-      title: 'CivilRelay AI Server',
+      title: 'Mental Guard Backend Server',
       version: '0.1.0',
       description:
         '## 한국어\n' +
@@ -39,7 +39,8 @@ export function buildOpenApiDocument() {
         'Auth: every `/api/*` request requires a Firebase ID token (`Authorization: Bearer <token>`).\n' +
         'WebSocket endpoints are not in this OpenAPI spec — see `docs/websocket.md`.',
     },
-    servers: [{ url: 'http://localhost:4000', description: 'Local dev / VM' }],
+    servers: [{ url: 'http://localhost:4000', description: 'Local dev / VM' },
+      { url: 'http://34.170.117.171:4000', description: 'GCP VM' }],
     tags: [
       { name: 'Sessions', description: '세션 / Sessions' },
       { name: 'Turns', description: '발화 / Turns' },

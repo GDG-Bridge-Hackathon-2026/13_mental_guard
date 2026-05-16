@@ -22,12 +22,15 @@ scriptsRouter.post(
       if (!turn) throw new ApiError(404, 'TURN_NOT_FOUND', `turn ${req.params.turnId} not found`);
       assertSessionAccess(turn.session, req.user!);
 
-      const script = await regenerateScript({
-        turn_id: turn.id,
-        raw_text: turn.rawText,
-        tone: body.tone,
-        additional_context: body.additional_context,
-      });
+      const script = await regenerateScript(
+        {
+          turn_id: turn.id,
+          raw_text: turn.rawText,
+          tone: body.tone,
+          additional_context: body.additional_context,
+        },
+        turn.sessionId
+      );
       res.json({ script, tone: body.tone });
     } catch (e) {
       next(e);
