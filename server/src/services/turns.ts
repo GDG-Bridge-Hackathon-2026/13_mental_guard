@@ -1,8 +1,3 @@
-// Turn 생성 비즈니스 로직.
-//
-// caller 턴: STT(이미 됐을 수도) → ML 분석 → displayed_text 설정 → 이벤트 발행
-// agent 턴: 저장 + (음성이면) agent.audio.ready 이벤트
-
 import { prisma } from '../prisma.js';
 import { newTurnId, newAnalysisId } from '../ids.js';
 import { ApiError } from '../errors.js';
@@ -27,6 +22,7 @@ import {
   SessionMode,
   EventType,
   Language,
+  Prisma,
   type Session,
   type Turn,
   type Analysis,
@@ -36,8 +32,6 @@ import type {
   AnalysisMetrics,
 } from '../types.js';
 
-// ── 공통 헬퍼 ──────────────────────────────────────────────────────────────
-
 interface AudioMaterials {
   audioUrl: string | null;
   sttUrl: string | null;
@@ -45,10 +39,6 @@ interface AudioMaterials {
   sttConfidence: number | null;
 }
 
-/**
- * 음성 버퍼를 받아 GCS 업로드 + (필요시) STT + transcript 업로드까지.
- * caller/agent 공통.
- */
 async function uploadAndTranscribe(opts: {
   sessionId: string;
   turnId: string;
@@ -79,8 +69,11 @@ async function uploadAndTranscribe(opts: {
     const sttUrl = stt.text ? await uploadTranscript(stt.text, sessionId, turnId) : null;
     return { audioUrl, sttUrl, rawText: stt.text, sttConfidence: stt.confidence };
   } catch (e) {
-    // agent 발화는 STT 실패해도 turn은 저장 (caller는 호출자가 처리)
-    console.warn('[uploadAndTranscribe] STT failed (non-fatal)', String(e));
+    console.warn('[uploadAndTranscribe] STT failed (non-fatal)', {
+      session_id: sessionId,
+      turn_id: turnId,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return { audioUrl, sttUrl: null, rawText: '', sttConfidence: null };
   }
 }
@@ -88,7 +81,6 @@ async function uploadAndTranscribe(opts: {
 function deliveryFor(mode: SessionMode, speaker: Speaker, source: TurnSource): DeliveryMethod {
   if (mode === SessionMode.TEXT_ONLY) return DeliveryMethod.TEXT;
   if (speaker === Speaker.CALLER) return DeliveryMethod.CAPTION;
-  // agent
   return source === TurnSource.VOICE ? DeliveryMethod.AUDIO : DeliveryMethod.TEXT;
 }
 
@@ -96,7 +88,68 @@ function languageForStt(sessionLanguage: Language, requestHint: Language): Langu
   return sessionLanguage === Language.AUTO ? requestHint : sessionLanguage;
 }
 
-// ── caller ───────────────────────────────────────────────────────────────
+async function getLockedActiveSession(
+  tx: Prisma.TransactionClient,
+  sessionId: string
+): Promise<Session> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "sessions" WHERE id = ${sessionId} FOR UPDATE
+  `;
+  if (rows.length === 0) {
+    throw new ApiError(404, 'SESSION_NOT_FOUND', `session ${sessionId} not found`);
+  }
+
+  const session = await tx.session.findUnique({ where: { id: sessionId } });
+  if (!session) throw new ApiError(404, 'SESSION_NOT_FOUND', `session ${sessionId} not found`);
+  if (session.endedAt) {
+    throw new ApiError(409, 'SESSION_ALREADY_ENDED', 'session already ended');
+  }
+  return session;
+}
+
+function emptyCallerTranscript(language: Language): string {
+  if (language === Language.EN) {
+    return 'Speech recognition returned no transcript. Please review the original audio.';
+  }
+  if (language === Language.JA) {
+    return '音声認識結果が空です。元の音声を確認してください。';
+  }
+  return '음성 인식 결과가 비어 있습니다. 원본 음성을 확인해 주세요.';
+}
+
+function normalizeCallerTranscript(
+  text: string,
+  language: Language,
+  context: { sessionId: string; turnId: string }
+): string {
+  const trimmed = text.trim();
+  if (trimmed) return trimmed;
+
+  console.warn('[turns] caller voice STT produced empty transcript', {
+    session_id: context.sessionId,
+    turn_id: context.turnId,
+    language,
+  });
+  return emptyCallerTranscript(language);
+}
+
+async function emitTurnEvent(
+  sessionId: string,
+  type: EventType,
+  payload: unknown
+): Promise<string | null> {
+  try {
+    const wire = await emit(sessionId, type, payload);
+    return wire.id;
+  } catch (e) {
+    console.warn('[turns] event emit failed (non-fatal)', {
+      session_id: sessionId,
+      type,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
+}
 
 interface CallerTextInput {
   type: 'text';
@@ -110,7 +163,6 @@ interface CallerVoiceInput {
   mime: string;
   language_hint: Language;
   duration_ms?: number;
-  /** WS 경로처럼 외부에서 이미 STT가 끝났을 때 */
   prerecorded_text?: string;
   prerecorded_confidence?: number;
 }
@@ -131,7 +183,7 @@ export async function addCallerTurn(
   input: CallerTextInput | CallerVoiceInput
 ): Promise<AddCallerTurnResult> {
   const startedAt = Date.now();
-  const session = await assertActiveSession(sessionId);
+  const initialSession = await assertActiveSession(sessionId);
 
   const turnId = newTurnId();
   let rawText: string;
@@ -143,12 +195,13 @@ export async function addCallerTurn(
 
   if (input.type === 'voice') {
     source = TurnSource.VOICE;
+    const sttLanguage = languageForStt(initialSession.language, input.language_hint);
     const mat = await uploadAndTranscribe({
       sessionId,
       turnId,
       audio: input.audio,
       mime: input.mime,
-      languageHint: languageForStt(session.language, input.language_hint),
+      languageHint: sttLanguage,
       runStt: input.prerecorded_text === undefined,
       durationMs: input.duration_ms,
       prerecorded:
@@ -158,7 +211,7 @@ export async function addCallerTurn(
     });
     audioUrl = mat.audioUrl;
     sttUrl = mat.sttUrl;
-    rawText = mat.rawText;
+    rawText = normalizeCallerTranscript(mat.rawText, sttLanguage, { sessionId, turnId });
     sttConfidence = mat.sttConfidence;
     durationMs = input.duration_ms ?? null;
   } else {
@@ -166,17 +219,15 @@ export async function addCallerTurn(
     rawText = input.content;
   }
 
-  const seq = session.totalTurns + 1;
-
-  // 직전 5턴 (caller만)
+  const analysisSession = await assertActiveSession(sessionId);
   const recentCallerTurns = await prisma.turn.findMany({
     where: { sessionId, speaker: Speaker.CALLER },
     orderBy: { seq: 'desc' },
     take: 5,
     include: { analysis: true },
   });
-  const recentAsc = [...recentCallerTurns].reverse();
-  const recentThreats = recentAsc
+  const recentThreats = [...recentCallerTurns]
+    .reverse()
     .map((t) => (t.analysis?.metrics as AnalysisMetrics | undefined)?.threat_level)
     .filter((x): x is number => typeof x === 'number');
 
@@ -184,44 +235,54 @@ export async function addCallerTurn(
     rawText,
     {
       recent_threats: recentThreats,
-      cumulative_threat: session.cumulativeThreat,
-      total_turns: session.totalTurns,
-      language: session.language,
+      cumulative_threat: analysisSession.cumulativeThreat,
+      total_turns: analysisSession.totalTurns,
+      language: analysisSession.language,
     },
     sessionId
   );
 
-  // 누적 통계
-  const distribution = session.classificationDistribution as unknown as ClassificationDistribution;
-  const newDistribution = incrementDistribution(distribution, analysis.classification);
-  const newCumThreat = rollingAverage(session.cumulativeThreat, session.totalTurns, analysis.metrics.threat_level);
-  const newFactual = rollingAverage(session.factualRatioAvg, session.totalTurns, analysis.metrics.factual_ratio);
-  const newRepetition = rollingAverage(session.repetitionAvg, session.totalTurns, analysis.metrics.repetition_score);
-
-  const deliveryMethod = deliveryFor(session.mode, Speaker.CALLER, source);
-  const isFiltered = analysis.removed_expressions.length > 0;
   const latencyMs = Date.now() - startedAt;
+  const { turn, analysisRow, sessionUpdate, threshold } = await prisma.$transaction(async (tx) => {
+    const lockedSession = await getLockedActiveSession(tx, sessionId);
+    const seq = lockedSession.totalTurns + 1;
+    const distribution = lockedSession.classificationDistribution as unknown as ClassificationDistribution;
+    const newDistribution = incrementDistribution(distribution, analysis.classification);
+    const newCumThreat = rollingAverage(
+      lockedSession.cumulativeThreat,
+      lockedSession.totalTurns,
+      analysis.metrics.threat_level
+    );
+    const newFactual = rollingAverage(
+      lockedSession.factualRatioAvg,
+      lockedSession.totalTurns,
+      analysis.metrics.factual_ratio
+    );
+    const newRepetition = rollingAverage(
+      lockedSession.repetitionAvg,
+      lockedSession.totalTurns,
+      analysis.metrics.repetition_score
+    );
 
-  const [turn, analysisRow] = await prisma.$transaction([
-    prisma.turn.create({
+    const turn = await tx.turn.create({
       data: {
         id: turnId,
         sessionId,
         seq,
         speaker: Speaker.CALLER,
         source,
-        deliveryMethod,
+        deliveryMethod: deliveryFor(lockedSession.mode, Speaker.CALLER, source),
         rawText,
         rawAudioUrl: audioUrl,
         sttUrl,
         displayedText: analysis.refined,
-        isFiltered,
+        isFiltered: analysis.removed_expressions.length > 0,
         durationMs,
         sttConfidence,
         latencyMs,
       },
-    }),
-    prisma.analysis.create({
+    });
+    const analysisRow = await tx.analysis.create({
       data: {
         id: newAnalysisId(),
         turnId,
@@ -235,8 +296,8 @@ export async function addCallerTurn(
         confidence: analysis.confidence,
         recommendedAction: J(analysis.recommended_action),
       },
-    }),
-    prisma.session.update({
+    });
+    await tx.session.update({
       where: { id: sessionId },
       data: {
         totalTurns: seq,
@@ -245,43 +306,49 @@ export async function addCallerTurn(
         repetitionAvg: newRepetition,
         classificationDistribution: J(newDistribution),
       },
-    }),
-  ]);
+    });
 
-  // threshold
-  const recentClassifications = recentAsc
-    .map((t) => t.analysis?.classification)
-    .filter((c): c is Classification => !!c);
-  recentClassifications.push(analysis.classification);
-  const threshold = evaluateThreshold(newCumThreat, recentClassifications);
+    const recentForThreshold = await tx.turn.findMany({
+      where: { sessionId, speaker: Speaker.CALLER },
+      orderBy: { seq: 'desc' },
+      take: 3,
+      include: { analysis: true },
+    });
+    const recentClassifications = recentForThreshold
+      .reverse()
+      .map((t) => t.analysis?.classification)
+      .filter((c): c is Classification => !!c);
+    const threshold = evaluateThreshold(newCumThreat, recentClassifications);
+    const sessionUpdate = {
+      total_turns: seq,
+      cumulative_threat: newCumThreat,
+      classification_distribution: newDistribution,
+      threshold_triggered: threshold,
+    };
 
-  const sessionUpdate = {
-    total_turns: seq,
-    cumulative_threat: newCumThreat,
-    classification_distribution: newDistribution,
-    threshold_triggered: threshold,
-  };
+    return { turn, analysisRow, sessionUpdate, threshold };
+  });
 
-  await emit(sessionId, EventType.CAPTION_FINAL, {
+  await emitTurnEvent(sessionId, EventType.CAPTION_FINAL, {
     turn: toTurnDto(turn),
     analysis: toAnalysisDto(analysisRow),
     session_update: sessionUpdate,
   });
-  await emit(sessionId, EventType.RISK_UPDATE, {
-    cumulative_threat: newCumThreat,
+  await emitTurnEvent(sessionId, EventType.RISK_UPDATE, {
+    cumulative_threat: sessionUpdate.cumulative_threat,
     trend: analysis.metrics.trend,
     threshold_triggered: threshold,
   });
   if (threshold === 'WARNING') {
-    await emit(sessionId, EventType.THRESHOLD_WARNING, {
+    await emitTurnEvent(sessionId, EventType.THRESHOLD_WARNING, {
       level: 'WARNING',
       message: '위험도가 높아졌습니다. 상급자 호출을 고려하세요.',
       reason: 'cumulative_threat >= 4.0',
     });
   } else if (threshold === 'TERMINATE_ALLOWED') {
-    await emit(sessionId, EventType.THRESHOLD_TERMINATE_ALLOWED, {
+    await emitTurnEvent(sessionId, EventType.THRESHOLD_TERMINATE_ALLOWED, {
       level: 'TERMINATE_ALLOWED',
-      message: '응대 종료가 허용됩니다.',
+      message: '상담 종료가 허용됩니다.',
       reason: 'cumulative_threat >= 4.5 OR last 3 turns all D',
     });
   }
@@ -293,8 +360,6 @@ export async function addCallerTurn(
   };
 }
 
-// ── agent ────────────────────────────────────────────────────────────────
-
 interface AgentTextInput {
   type: 'text';
   content: string;
@@ -305,7 +370,6 @@ interface AgentVoiceInput {
   audio: Buffer;
   mime: string;
   duration_ms?: number;
-  /** STT를 돌릴지 (기록용 transcript) */
   with_stt?: boolean;
 }
 
@@ -320,7 +384,7 @@ export async function addAgentTurn(
   input: AgentTextInput | AgentVoiceInput
 ): Promise<AddAgentTurnResult> {
   const startedAt = Date.now();
-  const session = await assertActiveSession(sessionId);
+  await assertActiveSession(sessionId);
 
   const turnId = newTurnId();
   let rawText = '';
@@ -342,7 +406,7 @@ export async function addAgentTurn(
     });
     audioUrl = mat.audioUrl;
     sttUrl = mat.sttUrl;
-    rawText = mat.rawText;
+    rawText = mat.rawText.trim();
     sttConfidence = mat.sttConfidence;
     durationMs = input.duration_ms ?? null;
   } else {
@@ -350,19 +414,18 @@ export async function addAgentTurn(
     rawText = input.content;
   }
 
-  const seq = session.totalTurns + 1;
-  const deliveryMethod = deliveryFor(session.mode, Speaker.AGENT, source);
   const latencyMs = Date.now() - startedAt;
-
-  const [turn] = await prisma.$transaction([
-    prisma.turn.create({
+  const turn = await prisma.$transaction(async (tx) => {
+    const lockedSession = await getLockedActiveSession(tx, sessionId);
+    const seq = lockedSession.totalTurns + 1;
+    const turn = await tx.turn.create({
       data: {
         id: turnId,
         sessionId,
         seq,
         speaker: Speaker.AGENT,
         source,
-        deliveryMethod,
+        deliveryMethod: deliveryFor(lockedSession.mode, Speaker.AGENT, source),
         rawText,
         rawAudioUrl: audioUrl,
         sttUrl,
@@ -372,20 +435,20 @@ export async function addAgentTurn(
         sttConfidence,
         latencyMs,
       },
-    }),
-    prisma.session.update({
+    });
+    await tx.session.update({
       where: { id: sessionId },
       data: { totalTurns: seq },
-    }),
-  ]);
+    });
+    return turn;
+  });
 
   let playbackEventId: string | null = null;
   if (input.type === 'voice' && audioUrl) {
-    const wire = await emit(sessionId, EventType.AGENT_AUDIO_READY, {
+    playbackEventId = await emitTurnEvent(sessionId, EventType.AGENT_AUDIO_READY, {
       turn_id: turnId,
       audio_url: audioUrl,
     });
-    playbackEventId = wire.id;
   }
 
   return {
@@ -394,8 +457,6 @@ export async function addAgentTurn(
     playback_event_id: playbackEventId,
   };
 }
-
-// ── 내부 ─────────────────────────────────────────────────────────────────
 
 async function assertActiveSession(sessionId: string): Promise<Session> {
   const session = await getSession(sessionId);
