@@ -1,0 +1,83 @@
+name: Deploy dev to VM
+
+on:
+  push:
+    branches: [dev]
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      llm: ${{ steps.filter.outputs.llm }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            server:
+              - 'server/**'
+            llm:
+              - 'llm/**'
+
+  deploy:
+    needs: changes
+    if: needs.changes.outputs.server == 'true' || needs.changes.outputs.llm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy changed services to VM
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          BUILD_SERVER: ${{ needs.changes.outputs.server }}
+          BUILD_LLM:    ${{ needs.changes.outputs.llm }}
+          REPO_PATH:    ${{ secrets.VM_REPO_PATH }}
+        with:
+          host:     ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          envs:     BUILD_SERVER,BUILD_LLM,REPO_PATH
+          script: |
+            set -euo pipefail
+            cd "$REPO_PATH"
+
+            echo ">>> Sync dev branch"
+            git fetch origin dev
+            git checkout dev
+            git reset --hard origin/dev
+
+            if [ "$BUILD_SERVER" = "true" ]; then
+              echo ">>> Rebuild server"
+              docker build -t mental-guard-server:dev ./server
+              docker rm -f mental-guard-server 2>/dev/null || true
+              docker run -d \
+                --name mental-guard-server \
+                --restart unless-stopped \
+                -p 4000:4000 \
+                --env-file ./server/.env \
+                mental-guard-server:dev
+            else
+              echo ">>> server unchanged, skipping"
+            fi
+
+            if [ "$BUILD_LLM" = "true" ]; then
+              echo ">>> Rebuild llm"
+              docker build -t mental-guard-llm:dev ./llm
+              docker rm -f mental-guard-llm 2>/dev/null || true
+              docker run -d \
+                --name mental-guard-llm \
+                --restart unless-stopped \
+                -p 5555:5555 \
+                mental-guard-llm:dev
+            else
+              echo ">>> llm unchanged, skipping"
+            fi
+
+            echo ">>> Prune dangling images"
+            docker image prune -f
