@@ -42,6 +42,11 @@ function langFromHint(hint?: 'ko' | 'ja' | 'auto'): Language {
   return hint === 'ko' ? Language.KO : hint === 'ja' ? Language.JA : Language.AUTO;
 }
 
+function isAudioTimeoutError(err: Error): boolean {
+  const maybeCode = (err as Error & { code?: unknown }).code;
+  return maybeCode === 11 || /Audio Timeout Error/i.test(err.message);
+}
+
 export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
   let active: ActiveUtterance | null = null;
   let mime = 'audio/webm';
@@ -73,7 +78,11 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
     });
 
     stream.onError((err) => {
-      console.warn('[caller-audio] stt stream error', err);
+      if (isAudioTimeoutError(err)) {
+        console.info('[caller-audio] streaming STT timed out; falling back to batch STT on audio.end');
+      } else {
+        console.warn('[caller-audio] stt stream error', err);
+      }
       utterance.streamError = err;
       utterance.stream = null;
       stream.abort();
