@@ -50,9 +50,9 @@ class Summary(BaseModel):
     risk_keywords: list[str]
 
 class Scripts(BaseModel):
-    empathy: str
-    firm: str
-    comfort: str
+    공감: str
+    단호: str
+    위로: str
 
 class RecommendedAction(BaseModel):
     level: RecommendedActionLevel
