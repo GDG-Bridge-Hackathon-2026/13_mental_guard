@@ -24,7 +24,7 @@ interface ChunkMsg {
 }
 interface EndMsg {
   type: 'audio.end';
-  language_hint?: 'ko' | 'ja' | 'auto';
+  language_hint?: 'ko' | 'ja' | 'en' | 'auto';
   duration_ms?: number;
   timestamp?: string;
 }
@@ -43,8 +43,14 @@ interface ActiveUtterance {
 const STALE_CHUNK_GUARD_MS = 1000;
 const IDLE_UTTERANCE_TIMEOUT_MS = 30_000;
 
-function langFromHint(hint?: 'ko' | 'ja' | 'auto'): Language {
-  return hint === 'ko' ? Language.KO : hint === 'ja' ? Language.JA : Language.AUTO;
+function langFromHint(hint?: 'ko' | 'ja' | 'en' | 'auto'): Language {
+  return hint === 'ko'
+    ? Language.KO
+    : hint === 'ja'
+      ? Language.JA
+      : hint === 'en'
+        ? Language.EN
+        : Language.AUTO;
 }
 
 function isAudioTimeoutError(err: Error): boolean {
@@ -88,8 +94,12 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
     }, IDLE_UTTERANCE_TIMEOUT_MS);
   };
 
-  const openUtterance = (langHint?: 'ko' | 'ja' | 'auto'): ActiveUtterance => {
-    const stream = createTranscribeStream({ language_hint: langFromHint(langHint) });
+  const openUtterance = (langHint?: 'ko' | 'ja' | 'en' | 'auto'): ActiveUtterance => {
+    const hintedLanguage = langFromHint(langHint);
+    const stream = createTranscribeStream({
+      language_hint:
+        ctx.sessionLanguage === Language.AUTO ? hintedLanguage : ctx.sessionLanguage,
+    });
     const utterance: ActiveUtterance = {
       stream,
       streamError: null,

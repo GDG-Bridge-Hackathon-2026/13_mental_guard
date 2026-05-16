@@ -7,6 +7,7 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
+import type { Language } from '@prisma/client';
 import { firebaseAuth } from '../firebase.js';
 import { prisma } from '../prisma.js';
 import { verifyCallerToken } from '../services/caller-token.js';
@@ -22,6 +23,7 @@ export interface WsContext {
   userId: string; // Firebase UID 또는 `caller:${sessionId}`
   scope: 'user' | 'caller';
   channel: Channel;
+  sessionLanguage: Language;
 }
 
 const CALLER_ALLOWED_CHANNELS = new Set<Channel>(['caller-audio', 'caller-events']);
@@ -70,7 +72,13 @@ export function attachWebSocket(
         }
       }
 
-      const ctx: WsContext = { sessionId, userId: auth.userId, scope: auth.scope, channel };
+      const ctx: WsContext = {
+        sessionId,
+        userId: auth.userId,
+        scope: auth.scope,
+        channel,
+        sessionLanguage: auth.sessionLanguage,
+      };
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req, ctx);
       });
@@ -103,10 +111,12 @@ interface UserAuth {
   userId: string;
   role: 'AGENT' | 'SUPERVISOR' | 'ADMIN';
   sessionAgentId: string;
+  sessionLanguage: Language;
 }
 interface CallerAuth {
   scope: 'caller';
   userId: string; // `caller:${sessionId}`
+  sessionLanguage: Language;
 }
 
 async function authenticateWs(
@@ -118,7 +128,7 @@ async function authenticateWs(
     const decoded = await firebaseAuth.verifyIdToken(token);
     const [user, session] = await Promise.all([
       prisma.user.findUnique({ where: { id: decoded.uid } }),
-      prisma.session.findUnique({ where: { id: sessionId }, select: { agentId: true } }),
+      prisma.session.findUnique({ where: { id: sessionId }, select: { agentId: true, language: true } }),
     ]);
     if (!user) return null;
     if (!session) return null;
@@ -127,6 +137,7 @@ async function authenticateWs(
       userId: decoded.uid,
       role: user.role,
       sessionAgentId: session.agentId,
+      sessionLanguage: session.language,
     };
   } catch {
     // fall through
@@ -135,7 +146,12 @@ async function authenticateWs(
   // (2) caller 토큰
   const matched = await verifyCallerToken(token, sessionId);
   if (matched) {
-    return { scope: 'caller', userId: `caller:${sessionId}` };
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { language: true },
+    });
+    if (!session) return null;
+    return { scope: 'caller', userId: `caller:${sessionId}`, sessionLanguage: session.language };
   }
 
   return null;

@@ -26,7 +26,7 @@ import {
   DeliveryMethod,
   SessionMode,
   EventType,
-  type Language,
+  Language,
   type Session,
   type Turn,
   type Analysis,
@@ -92,6 +92,10 @@ function deliveryFor(mode: SessionMode, speaker: Speaker, source: TurnSource): D
   return source === TurnSource.VOICE ? DeliveryMethod.AUDIO : DeliveryMethod.TEXT;
 }
 
+function languageForStt(sessionLanguage: Language, requestHint: Language): Language {
+  return sessionLanguage === Language.AUTO ? requestHint : sessionLanguage;
+}
+
 // ── caller ───────────────────────────────────────────────────────────────
 
 interface CallerTextInput {
@@ -144,7 +148,7 @@ export async function addCallerTurn(
       turnId,
       audio: input.audio,
       mime: input.mime,
-      languageHint: input.language_hint,
+      languageHint: languageForStt(session.language, input.language_hint),
       runStt: input.prerecorded_text === undefined,
       durationMs: input.duration_ms,
       prerecorded:

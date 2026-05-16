@@ -11,7 +11,7 @@ const SpeakerStr = z.enum(['caller', 'agent']);
 const SourceStr = z.enum(['voice', 'text']);
 const DeliveryMethodStr = z.enum(['caption', 'audio', 'text']);
 const ChannelStr = z.enum(['voice', 'text', 'mixed']);
-const LanguageStr = z.enum(['ko', 'ja', 'auto']);
+const LanguageStr = z.enum(['ko', 'ja', 'en', 'auto']);
 const SessionStatusStr = z.enum([
   'created', 'waiting', 'active', 'paused', 'ending', 'ended', 'failed',
 ]);

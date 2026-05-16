@@ -29,6 +29,7 @@ enum Channel {
 enum Language {
   KO
   JA
+  EN
   AUTO
 }
 

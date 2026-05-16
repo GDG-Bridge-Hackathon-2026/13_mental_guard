@@ -1,6 +1,7 @@
 import speech, { protos } from '@google-cloud/speech';
 import { env } from './env.js';
 import { ApiError } from './errors.js';
+import { Language } from '@prisma/client';
 
 const client = new speech.SpeechClient({
   projectId: env.GCS_PROJECT_ID,
@@ -33,22 +34,31 @@ type StreamingResponse = protos.google.cloud.speech.v1.IStreamingRecognizeRespon
 const SYNC_LIMIT_MS = 55_000;
 
 interface SttOptions {
-  language_hint?: 'KO' | 'JA' | 'AUTO';
+  language_hint?: Language;
   sample_rate?: number;
   encoding?: keyof typeof ENCODING_MAP;
   duration_ms?: number;
 }
+
+const LANGUAGE_CODE: Record<Exclude<Language, 'AUTO'>, string> = {
+  KO: 'ko-KR',
+  JA: 'ja-JP',
+  EN: 'en-US',
+};
+const AUTO_LANGUAGE_CODES = Object.values(LANGUAGE_CODE);
 
 function buildConfig(options?: SttOptions): {
   config: protos.google.cloud.speech.v1.IRecognitionConfig;
   languageCode: string;
 } {
   const languageCode =
-    options?.language_hint === 'JA'
-      ? 'ja-JP'
-      : options?.language_hint === 'KO'
-        ? 'ko-KR'
-        : env.GCP_STT_LANGUAGE;
+    options?.language_hint && options.language_hint !== Language.AUTO
+      ? LANGUAGE_CODE[options.language_hint]
+      : env.GCP_STT_LANGUAGE;
+  const alternativeLanguageCodes =
+    options?.language_hint === Language.AUTO
+      ? AUTO_LANGUAGE_CODES.filter((code) => code !== languageCode)
+      : undefined;
   const encoding = ENCODING_MAP[options?.encoding ?? env.GCP_STT_ENCODING];
   const sampleRateHertz = options?.sample_rate ?? env.GCP_STT_SAMPLE_RATE;
   return {
@@ -56,8 +66,7 @@ function buildConfig(options?: SttOptions): {
       encoding,
       sampleRateHertz,
       languageCode,
-      alternativeLanguageCodes:
-        options?.language_hint === 'AUTO' ? ['ja-JP', 'ko-KR'] : undefined,
+      alternativeLanguageCodes,
       enableAutomaticPunctuation: true,
       model: 'default',
     },
