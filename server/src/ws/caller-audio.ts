@@ -31,7 +31,8 @@ interface EndMsg {
 type Incoming = ChunkMsg | EndMsg;
 
 interface ActiveUtterance {
-  stream: StreamingHandle;
+  stream: StreamingHandle | null;
+  streamError: Error | null;
   audioChunks: Buffer[];
   mime: string;
   startedAt: number;
@@ -53,6 +54,13 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
 
   const openUtterance = (langHint?: 'ko' | 'ja' | 'auto'): ActiveUtterance => {
     const stream = createTranscribeStream({ language_hint: langFromHint(langHint) });
+    const utterance: ActiveUtterance = {
+      stream,
+      streamError: null,
+      audioChunks: [],
+      mime,
+      startedAt: Date.now(),
+    };
 
     stream.onPartial((text) => {
       // 영속화 X — interim은 폭주할 수 있으니 메모리 버스로만 전파
@@ -66,13 +74,12 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
 
     stream.onError((err) => {
       console.warn('[caller-audio] stt stream error', err);
-      send({
-        type: 'error',
-        error: { code: 'STT_FAILED', message: err.message ?? String(err) },
-      });
+      utterance.streamError = err;
+      utterance.stream = null;
+      stream.abort();
     });
 
-    return { stream, audioChunks: [], mime, startedAt: Date.now() };
+    return utterance;
   };
 
   ws.on('message', (raw) => {
@@ -90,7 +97,7 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
         if (!active) active = openUtterance(); // 첫 chunk면 새 발화 시작
         const buf = Buffer.from(msg.data, 'base64');
         active.audioChunks.push(buf);
-        active.stream.write(buf);
+        active.stream?.write(buf);
         send({ type: 'audio.received', seq: msg.seq });
       } catch (e) {
         send({
@@ -117,19 +124,34 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
           if (closed) return;
           try {
             // GCP stream close + 최종 transcript 수신
-            const result = await u.stream.close();
             const audio = Buffer.concat(u.audioChunks);
             const durationMs = explicitDuration ?? Date.now() - u.startedAt;
+            let prerecorded: { text: string; confidence: number | null } | undefined;
 
-            // 이미 STT 끝났으므로 prerecorded_text로 전달 — addCallerTurn 안에서 STT 재호출 안 함
+            if (u.stream) {
+              try {
+                const result = await u.stream.close();
+                prerecorded = { text: result.text, confidence: result.confidence };
+              } catch (e) {
+                console.warn('[caller-audio] streaming STT close failed; falling back to batch STT', e);
+              }
+            } else if (u.streamError) {
+              console.warn('[caller-audio] streaming STT unavailable; falling back to batch STT');
+            }
+
+            // If streaming STT succeeded, reuse it. Otherwise addCallerTurn runs batch STT.
             await addCallerTurn(ctx.sessionId, {
               type: 'voice',
               audio,
               mime: u.mime,
               language_hint: langHint,
               duration_ms: durationMs,
-              prerecorded_text: result.text,
-              prerecorded_confidence: result.confidence,
+              ...(prerecorded
+                ? {
+                    prerecorded_text: prerecorded.text,
+                    prerecorded_confidence: prerecorded.confidence ?? undefined,
+                  }
+                : {}),
             });
             // caption.final / risk.update 등은 addCallerTurn이 emit
           } catch (e) {
@@ -150,7 +172,7 @@ export function handleCallerAudio(ws: WebSocket, ctx: WsContext) {
   const cleanup = () => {
     closed = true;
     if (active) {
-      active.stream.abort();
+      active.stream?.abort();
       active = null;
     }
   };
