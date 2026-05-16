@@ -146,7 +146,11 @@ export interface StreamingHandle {
 export function createTranscribeStream(options?: SttOptions): StreamingHandle {
   const { config, languageCode } = buildConfig(options);
 
-  const recognizeStream = client.streamingRecognize();
+  const recognizeStream = client.streamingRecognize({
+    config,
+    interimResults: true,
+    singleUtterance: false,
+  });
 
   const finalSegments: string[] = [];
   let finalConfidence = 0;
@@ -159,6 +163,10 @@ export function createTranscribeStream(options?: SttOptions): StreamingHandle {
   const endPromise = new Promise<TranscribeResult>((res, rej) => {
     resolveEnd = res;
     rejectEnd = rej;
+  });
+  endPromise.catch(() => {
+    // The caller may not await close() until audio.end; keep early stream
+    // errors from surfacing as unhandled rejections before then.
   });
   let aborted = false;
 
@@ -199,16 +207,10 @@ export function createTranscribeStream(options?: SttOptions): StreamingHandle {
     });
   });
 
-  // 첫 write는 streamingConfig
-  recognizeStream.write({
-    streamingConfig: { config, interimResults: true, singleUtterance: false },
-  });
-
   return {
     write(chunk: Buffer) {
       if (aborted) return;
-      // audioContent 필드에 raw bytes
-      recognizeStream.write({ audioContent: chunk });
+      recognizeStream.write(chunk);
     },
     onPartial(listener) { partialListeners.push(listener); },
     onError(listener) { errorListeners.push(listener); },
