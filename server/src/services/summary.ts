@@ -55,8 +55,8 @@ export async function endSession(
         seq: t.seq,
         speaker: t.speaker,
         text: t.rawText,
-        classification: t.analysis?.classification,
-        threat_level: (t.analysis?.metrics as AnalysisMetrics | undefined)?.threat_level,
+        classification: t.analysis?.classification ?? null,
+        threat_level: (t.analysis?.metrics as AnalysisMetrics | undefined)?.threat_level ?? null,
       })),
     },
     sessionId

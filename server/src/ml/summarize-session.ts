@@ -18,8 +18,8 @@ export interface SummarizeInput {
     seq: number;
     speaker: 'CALLER' | 'AGENT';
     text: string;
-    classification?: Classification;
-    threat_level?: number;
+    classification: Classification | null;
+    threat_level: number | null;
   }>;
   cumulative_threat: number;
   language: string;
