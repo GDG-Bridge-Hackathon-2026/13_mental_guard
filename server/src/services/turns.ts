@@ -1,21 +1,12 @@
 // Turn 생성 비즈니스 로직.
 //
-// caller 턴:
-//   - audio면 GCS 업로드 + GCP STT로 transcript 생성 (또는 호출자가 transcript 전달 — WS 경로)
-//   - ML /analyze 호출 → Analysis 생성
-//   - displayed_text = analysis.refined, is_filtered 결정
-//   - delivery_method: caption_relay→CAPTION, text_only→TEXT
-//   - threshold 평가, agent-events로 caption.final/risk.update/threshold.* 발행
-//
-// agent 턴:
-//   - audio면 GCS 업로드 (STT는 선택 — 기록용)
-//   - Analysis 만들지 않음
-//   - delivery_method: caption_relay→AUDIO, text_only→TEXT
-//   - caller-events로 agent.audio.ready 발행 (음성일 때)
+// caller 턴: STT(이미 됐을 수도) → ML 분석 → displayed_text 설정 → 이벤트 발행
+// agent 턴: 저장 + (음성이면) agent.audio.ready 이벤트
 
 import { prisma } from '../prisma.js';
 import { newTurnId, newAnalysisId } from '../ids.js';
 import { ApiError } from '../errors.js';
+import { J } from '../utils/json.js';
 import { getSession } from './sessions.js';
 import { analyzeTurn } from '../ml/analyze-turn.js';
 import { transcribeAudio } from '../stt.js';
@@ -34,7 +25,6 @@ import {
   DeliveryMethod,
   SessionMode,
   EventType,
-  Prisma,
   type Language,
   type Session,
   type Turn,
@@ -44,6 +34,62 @@ import type {
   ClassificationDistribution,
   AnalysisMetrics,
 } from '../types.js';
+
+// ── 공통 헬퍼 ──────────────────────────────────────────────────────────────
+
+interface AudioMaterials {
+  audioUrl: string | null;
+  sttUrl: string | null;
+  rawText: string;
+  sttConfidence: number | null;
+}
+
+/**
+ * 음성 버퍼를 받아 GCS 업로드 + (필요시) STT + transcript 업로드까지.
+ * caller/agent 공통.
+ */
+async function uploadAndTranscribe(opts: {
+  sessionId: string;
+  turnId: string;
+  audio: Buffer;
+  mime: string;
+  languageHint?: Language;
+  runStt: boolean;
+  durationMs?: number;
+  prerecorded?: { text: string; confidence: number | null };
+}): Promise<AudioMaterials> {
+  const { sessionId, turnId, audio, mime, languageHint, runStt, durationMs, prerecorded } = opts;
+
+  const audioUrl = await uploadAudio(audio, sessionId, turnId, mime);
+
+  if (prerecorded) {
+    const sttUrl = prerecorded.text
+      ? await uploadTranscript(prerecorded.text, sessionId, turnId)
+      : null;
+    return { audioUrl, sttUrl, rawText: prerecorded.text, sttConfidence: prerecorded.confidence };
+  }
+
+  if (!runStt) {
+    return { audioUrl, sttUrl: null, rawText: '', sttConfidence: null };
+  }
+
+  try {
+    const stt = await transcribeAudio(audio, { language_hint: languageHint, duration_ms: durationMs });
+    const sttUrl = stt.text ? await uploadTranscript(stt.text, sessionId, turnId) : null;
+    return { audioUrl, sttUrl, rawText: stt.text, sttConfidence: stt.confidence };
+  } catch (e) {
+    // agent 발화는 STT 실패해도 turn은 저장 (caller는 호출자가 처리)
+    console.warn('[uploadAndTranscribe] STT failed (non-fatal)', String(e));
+    return { audioUrl, sttUrl: null, rawText: '', sttConfidence: null };
+  }
+}
+
+function deliveryFor(mode: SessionMode, speaker: Speaker, source: TurnSource): DeliveryMethod {
+  if (mode === SessionMode.TEXT_ONLY) return DeliveryMethod.TEXT;
+  if (speaker === Speaker.CALLER) return DeliveryMethod.CAPTION;
+  // agent
+  return source === TurnSource.VOICE ? DeliveryMethod.AUDIO : DeliveryMethod.TEXT;
+}
 
 // ── caller ───────────────────────────────────────────────────────────────
 
@@ -80,10 +126,7 @@ export async function addCallerTurn(
   input: CallerTextInput | CallerVoiceInput
 ): Promise<AddCallerTurnResult> {
   const startedAt = Date.now();
-  const session = await getSession(sessionId);
-  if (session.endedAt) {
-    throw new ApiError(409, 'SESSION_ALREADY_ENDED', 'session already ended');
-  }
+  const session = await assertActiveSession(sessionId);
 
   const turnId = newTurnId();
   let rawText: string;
@@ -95,17 +138,23 @@ export async function addCallerTurn(
 
   if (input.type === 'voice') {
     source = TurnSource.VOICE;
-    audioUrl = await uploadAudio(input.audio, sessionId, turnId, input.mime);
-    if (input.prerecorded_text !== undefined) {
-      rawText = input.prerecorded_text;
-      sttConfidence = input.prerecorded_confidence ?? null;
-    } else {
-      const stt = await transcribeAudio(input.audio, { language_hint: input.language_hint });
-      rawText = stt.text;
-      sttConfidence = stt.confidence;
-    }
-    // STT transcript를 stt/ 경로에 별도 저장 (실패해도 무시)
-    if (rawText) sttUrl = await uploadTranscript(rawText, sessionId, turnId);
+    const mat = await uploadAndTranscribe({
+      sessionId,
+      turnId,
+      audio: input.audio,
+      mime: input.mime,
+      languageHint: input.language_hint,
+      runStt: input.prerecorded_text === undefined,
+      durationMs: input.duration_ms,
+      prerecorded:
+        input.prerecorded_text !== undefined
+          ? { text: input.prerecorded_text, confidence: input.prerecorded_confidence ?? null }
+          : undefined,
+    });
+    audioUrl = mat.audioUrl;
+    sttUrl = mat.sttUrl;
+    rawText = mat.rawText;
+    sttConfidence = mat.sttConfidence;
     durationMs = input.duration_ms ?? null;
   } else {
     source = TurnSource.TEXT;
@@ -114,14 +163,14 @@ export async function addCallerTurn(
 
   const seq = session.totalTurns + 1;
 
-  // 직전 5턴
-  const recentDesc = await prisma.turn.findMany({
+  // 직전 5턴 (caller만)
+  const recentCallerTurns = await prisma.turn.findMany({
     where: { sessionId, speaker: Speaker.CALLER },
     orderBy: { seq: 'desc' },
     take: 5,
     include: { analysis: true },
   });
-  const recentAsc = [...recentDesc].reverse();
+  const recentAsc = [...recentCallerTurns].reverse();
   const recentThreats = recentAsc
     .map((t) => (t.analysis?.metrics as AnalysisMetrics | undefined)?.threat_level)
     .filter((x): x is number => typeof x === 'number');
@@ -138,27 +187,13 @@ export async function addCallerTurn(
   );
 
   // 누적 통계
-  const distribution =
-    session.classificationDistribution as unknown as ClassificationDistribution;
+  const distribution = session.classificationDistribution as unknown as ClassificationDistribution;
   const newDistribution = incrementDistribution(distribution, analysis.classification);
-  const newCumThreat = rollingAverage(
-    session.cumulativeThreat,
-    session.totalTurns,
-    analysis.metrics.threat_level
-  );
-  const newFactual = rollingAverage(
-    session.factualRatioAvg,
-    session.totalTurns,
-    analysis.metrics.factual_ratio
-  );
-  const newRepetition = rollingAverage(
-    session.repetitionAvg,
-    session.totalTurns,
-    analysis.metrics.repetition_score
-  );
+  const newCumThreat = rollingAverage(session.cumulativeThreat, session.totalTurns, analysis.metrics.threat_level);
+  const newFactual = rollingAverage(session.factualRatioAvg, session.totalTurns, analysis.metrics.factual_ratio);
+  const newRepetition = rollingAverage(session.repetitionAvg, session.totalTurns, analysis.metrics.repetition_score);
 
-  const deliveryMethod =
-    session.mode === SessionMode.TEXT_ONLY ? DeliveryMethod.TEXT : DeliveryMethod.CAPTION;
+  const deliveryMethod = deliveryFor(session.mode, Speaker.CALLER, source);
   const isFiltered = analysis.removed_expressions.length > 0;
   const latencyMs = Date.now() - startedAt;
 
@@ -186,14 +221,14 @@ export async function addCallerTurn(
         id: newAnalysisId(),
         turnId,
         refined: analysis.refined,
-        metrics: analysis.metrics as unknown as Prisma.InputJsonValue,
-        summary: analysis.summary as unknown as Prisma.InputJsonValue,
+        metrics: J(analysis.metrics),
+        summary: J(analysis.summary),
         classification: analysis.classification,
-        preservedFacts: analysis.preserved_facts as unknown as Prisma.InputJsonValue,
-        removedExpressions: analysis.removed_expressions as unknown as Prisma.InputJsonValue,
-        abuseTypes: analysis.abuse_types as unknown as Prisma.InputJsonValue,
+        preservedFacts: J(analysis.preserved_facts),
+        removedExpressions: J(analysis.removed_expressions),
+        abuseTypes: J(analysis.abuse_types),
         confidence: analysis.confidence,
-        recommendedAction: analysis.recommended_action as unknown as Prisma.InputJsonValue,
+        recommendedAction: J(analysis.recommended_action),
       },
     }),
     prisma.session.update({
@@ -203,7 +238,7 @@ export async function addCallerTurn(
         cumulativeThreat: newCumThreat,
         factualRatioAvg: newFactual,
         repetitionAvg: newRepetition,
-        classificationDistribution: newDistribution as unknown as Prisma.InputJsonValue,
+        classificationDistribution: J(newDistribution),
       },
     }),
   ]);
@@ -215,7 +250,6 @@ export async function addCallerTurn(
   recentClassifications.push(analysis.classification);
   const threshold = evaluateThreshold(newCumThreat, recentClassifications);
 
-  // 이벤트 발행 (영속화는 events.ts가 처리)
   await emit(sessionId, EventType.CAPTION_FINAL, {
     turn,
     analysis: {
@@ -284,10 +318,7 @@ export async function addAgentTurn(
   input: AgentTextInput | AgentVoiceInput
 ): Promise<AddAgentTurnResult> {
   const startedAt = Date.now();
-  const session = await getSession(sessionId);
-  if (session.endedAt) {
-    throw new ApiError(409, 'SESSION_ALREADY_ENDED', 'session already ended');
-  }
+  const session = await assertActiveSession(sessionId);
 
   const turnId = newTurnId();
   let rawText = '';
@@ -299,32 +330,26 @@ export async function addAgentTurn(
 
   if (input.type === 'voice') {
     source = TurnSource.VOICE;
-    audioUrl = await uploadAudio(input.audio, sessionId, turnId, input.mime);
+    const mat = await uploadAndTranscribe({
+      sessionId,
+      turnId,
+      audio: input.audio,
+      mime: input.mime,
+      runStt: input.with_stt !== false,
+      durationMs: input.duration_ms,
+    });
+    audioUrl = mat.audioUrl;
+    sttUrl = mat.sttUrl;
+    rawText = mat.rawText;
+    sttConfidence = mat.sttConfidence;
     durationMs = input.duration_ms ?? null;
-    if (input.with_stt !== false) {
-      try {
-        const stt = await transcribeAudio(input.audio);
-        rawText = stt.text;
-        sttConfidence = stt.confidence;
-        if (rawText) sttUrl = await uploadTranscript(rawText, sessionId, turnId);
-      } catch (e) {
-        // 접수인 발화는 정제 대상이 아니므로 STT 실패해도 turn은 저장
-        console.warn('[addAgentTurn] STT failed (non-fatal)', String(e));
-      }
-    }
   } else {
     source = TurnSource.TEXT;
     rawText = input.content;
   }
 
   const seq = session.totalTurns + 1;
-  const deliveryMethod =
-    session.mode === SessionMode.TEXT_ONLY
-      ? DeliveryMethod.TEXT
-      : input.type === 'voice'
-        ? DeliveryMethod.AUDIO
-        : DeliveryMethod.TEXT;
-
+  const deliveryMethod = deliveryFor(session.mode, Speaker.AGENT, source);
   const latencyMs = Date.now() - startedAt;
 
   const [turn] = await prisma.$transaction([
@@ -366,4 +391,14 @@ export async function addAgentTurn(
     delivered_to_caller: input.type === 'voice',
     playback_event_id: playbackEventId,
   };
+}
+
+// ── 내부 ─────────────────────────────────────────────────────────────────
+
+async function assertActiveSession(sessionId: string): Promise<Session> {
+  const session = await getSession(sessionId);
+  if (session.endedAt) {
+    throw new ApiError(409, 'SESSION_ALREADY_ENDED', 'session already ended');
+  }
+  return session;
 }

@@ -33,6 +33,9 @@ const EnvSchema = z.object({
   FIREBASE_PROJECT_ID: z.string().min(1),
   FIREBASE_CLIENT_EMAIL: z.string().email(),
   FIREBASE_PRIVATE_KEY: z.string().min(1),
+
+  // CORS / WS origin 허용. '*' 또는 콤마구분 URL 목록 (e.g., "https://app.vercel.app,http://localhost:3000")
+  CORS_ORIGINS: z.string().default('*'),
 });
 
 export const env = EnvSchema.parse(process.env);

@@ -23,36 +23,35 @@ const ENCODING_MAP: Record<string, Encoding> = {
 
 export interface TranscribeResult {
   text: string;
-  confidence: number; // 0~1
+  confidence: number;
   detected_language: string;
 }
 
 type RecognizeResult = protos.google.cloud.speech.v1.ISpeechRecognitionResult;
+type StreamingResponse = protos.google.cloud.speech.v1.IStreamingRecognizeResponse;
 
-/**
- * 버퍼된 음성 → 텍스트.
- * 짧은 발화(<1분) recognize 동기 API 사용. 1분 이상은 longRunningRecognize로 교체 필요.
- */
-export async function transcribeAudio(
-  audio: Buffer,
-  options?: {
-    language_hint?: 'KO' | 'JA' | 'AUTO';
-    sample_rate?: number;
-    encoding?: keyof typeof ENCODING_MAP;
-  }
-): Promise<TranscribeResult> {
+const SYNC_LIMIT_MS = 55_000;
+
+interface SttOptions {
+  language_hint?: 'KO' | 'JA' | 'AUTO';
+  sample_rate?: number;
+  encoding?: keyof typeof ENCODING_MAP;
+  duration_ms?: number;
+}
+
+function buildConfig(options?: SttOptions): {
+  config: protos.google.cloud.speech.v1.IRecognitionConfig;
+  languageCode: string;
+} {
   const languageCode =
     options?.language_hint === 'JA'
       ? 'ja-JP'
       : options?.language_hint === 'KO'
         ? 'ko-KR'
         : env.GCP_STT_LANGUAGE;
-
   const encoding = ENCODING_MAP[options?.encoding ?? env.GCP_STT_ENCODING];
   const sampleRateHertz = options?.sample_rate ?? env.GCP_STT_SAMPLE_RATE;
-
-  const request: protos.google.cloud.speech.v1.IRecognizeRequest = {
-    audio: { content: audio.toString('base64') },
+  return {
     config: {
       encoding,
       sampleRateHertz,
@@ -62,26 +61,165 @@ export async function transcribeAudio(
       enableAutomaticPunctuation: true,
       model: 'default',
     },
+    languageCode,
   };
+}
 
+// ── 동기 / 장시간 (REST 업로드 경로) ──────────────────────────────────────
+
+export async function transcribeAudio(
+  audio: Buffer,
+  options?: SttOptions
+): Promise<TranscribeResult> {
+  const { config, languageCode } = buildConfig(options);
+  const request: protos.google.cloud.speech.v1.IRecognizeRequest = {
+    audio: { content: audio.toString('base64') },
+    config,
+  };
+  const useLong = (options?.duration_ms ?? 0) > SYNC_LIMIT_MS;
   try {
-    // GAX CallOptions: timeout만 사용 (signal 미지원)
-    const [response] = await client.recognize(request, {
-      timeout: env.GCP_STT_TIMEOUT_MS,
-    });
-    const results: RecognizeResult[] = response.results ?? [];
-    if (results.length === 0) {
-      return { text: '', confidence: 0, detected_language: languageCode };
-    }
-    const text = results
-      .map((r: RecognizeResult) => r.alternatives?.[0]?.transcript ?? '')
-      .join(' ')
-      .trim();
-    const confidence = results[0]?.alternatives?.[0]?.confidence ?? 0;
-    const detected =
-      (results[0] as { languageCode?: string } | undefined)?.languageCode ?? languageCode;
-    return { text, confidence, detected_language: detected };
+    return useLong
+      ? await recognizeLong(request, languageCode)
+      : await recognizeSync(request, languageCode);
   } catch (e) {
+    if (!useLong && /exceeds duration limit|too long/i.test(String(e))) {
+      console.warn('[stt] sync rejected, retrying with longRunningRecognize');
+      return recognizeLong(request, languageCode);
+    }
     throw new ApiError(500, 'STT_FAILED', `gcp stt failed: ${String(e)}`);
   }
+}
+
+async function recognizeSync(
+  request: protos.google.cloud.speech.v1.IRecognizeRequest,
+  fallbackLang: string
+): Promise<TranscribeResult> {
+  const [response] = await client.recognize(request, { timeout: env.GCP_STT_TIMEOUT_MS });
+  return shapeResult(response.results ?? [], fallbackLang);
+}
+
+async function recognizeLong(
+  request: protos.google.cloud.speech.v1.IRecognizeRequest,
+  fallbackLang: string
+): Promise<TranscribeResult> {
+  const [operation] = await client.longRunningRecognize(request);
+  const [response] = await operation.promise();
+  return shapeResult(response.results ?? [], fallbackLang);
+}
+
+function shapeResult(results: RecognizeResult[], fallbackLang: string): TranscribeResult {
+  if (results.length === 0) return { text: '', confidence: 0, detected_language: fallbackLang };
+  const text = results
+    .map((r) => r.alternatives?.[0]?.transcript ?? '')
+    .join(' ')
+    .trim();
+  const confidence = results[0]?.alternatives?.[0]?.confidence ?? 0;
+  const detected =
+    (results[0] as { languageCode?: string } | undefined)?.languageCode ?? fallbackLang;
+  return { text, confidence, detected_language: detected };
+}
+
+// ── 스트리밍 (WS caller-audio 경로) ───────────────────────────────────────
+
+export interface StreamingHandle {
+  /** 청크를 GCP에 push. 비차단. */
+  write(chunk: Buffer): void;
+  /** interim transcript 콜백 등록 (여러 번 호출됨). */
+  onPartial(listener: (text: string) => void): void;
+  /** 스트림 에러 (네트워크, 5분 초과 등). */
+  onError(listener: (err: Error) => void): void;
+  /** audio.end 시 호출. 최종 transcript로 resolve. */
+  close(): Promise<TranscribeResult>;
+  /** 즉시 폐기 (WS 끊김 등). 최종 결과 버림. */
+  abort(): void;
+}
+
+/**
+ * GCP Streaming Recognize 한 발화 단위 핸들 생성.
+ *
+ * 정책 (memory project_websocket.md 참조):
+ *   - audio.chunk 들어올 때 createTranscribeStream() 호출 (발화 시작)
+ *   - 각 chunk마다 write()
+ *   - audio.end 시 close() → 최종 transcript
+ *   - GCP 5분 제한은 발화 단위 정책으로 자연 회피 (한 발화가 5분 넘어가는 케이스만 위험)
+ */
+export function createTranscribeStream(options?: SttOptions): StreamingHandle {
+  const { config, languageCode } = buildConfig(options);
+
+  const recognizeStream = client.streamingRecognize();
+
+  const finalSegments: string[] = [];
+  let finalConfidence = 0;
+  let detectedLang = languageCode;
+  const partialListeners: Array<(text: string) => void> = [];
+  const errorListeners: Array<(err: Error) => void> = [];
+
+  let resolveEnd!: (r: TranscribeResult) => void;
+  let rejectEnd!: (e: Error) => void;
+  const endPromise = new Promise<TranscribeResult>((res, rej) => {
+    resolveEnd = res;
+    rejectEnd = rej;
+  });
+  let aborted = false;
+
+  recognizeStream.on('data', (data: StreamingResponse) => {
+    const result = data.results?.[0];
+    if (!result) return;
+    const transcript = result.alternatives?.[0]?.transcript ?? '';
+    if (!transcript) return;
+
+    if (result.isFinal) {
+      finalSegments.push(transcript);
+      const c = result.alternatives?.[0]?.confidence;
+      if (typeof c === 'number' && c > finalConfidence) finalConfidence = c;
+      const langGuess = (result as { languageCode?: string }).languageCode;
+      if (langGuess) detectedLang = langGuess;
+    } else {
+      // interim — 지금까지 확정된 final + 현재 interim 합쳐서 표시용 텍스트
+      const current = [...finalSegments, transcript].join(' ').trim();
+      for (const l of partialListeners) {
+        try { l(current); } catch (e) { console.error('[stt partial listener]', e); }
+      }
+    }
+  });
+
+  recognizeStream.on('error', (err: Error) => {
+    for (const l of errorListeners) {
+      try { l(err); } catch (e) { console.error('[stt error listener]', e); }
+    }
+    if (!aborted) rejectEnd(err);
+  });
+
+  recognizeStream.on('end', () => {
+    if (aborted) return;
+    resolveEnd({
+      text: finalSegments.join(' ').trim(),
+      confidence: finalConfidence,
+      detected_language: detectedLang,
+    });
+  });
+
+  // 첫 write는 streamingConfig
+  recognizeStream.write({
+    streamingConfig: { config, interimResults: true, singleUtterance: false },
+  });
+
+  return {
+    write(chunk: Buffer) {
+      if (aborted) return;
+      // audioContent 필드에 raw bytes
+      recognizeStream.write({ audioContent: chunk });
+    },
+    onPartial(listener) { partialListeners.push(listener); },
+    onError(listener) { errorListeners.push(listener); },
+    close() {
+      if (aborted) return Promise.resolve({ text: '', confidence: 0, detected_language: detectedLang });
+      recognizeStream.end();
+      return endPromise;
+    },
+    abort() {
+      aborted = true;
+      try { recognizeStream.destroy(); } catch { /* noop */ }
+    },
+  };
 }

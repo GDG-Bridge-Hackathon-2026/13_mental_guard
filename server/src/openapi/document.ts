@@ -3,8 +3,8 @@ import {
   OpenAPIRegistry,
   OpenApiGeneratorV3,
 } from '@asteasolutions/zod-to-openapi';
-import { registerSchemas } from './schemas.js';
-import { registerPaths } from './paths.js';
+import './schemas.js'; // .openapi() 이름 부여로 인한 self-register 효과
+import { registerPaths } from './paths/index.js';
 
 export function buildOpenApiDocument() {
   const registry = new OpenAPIRegistry();
@@ -18,7 +18,6 @@ export function buildOpenApiDocument() {
       'Use a Firebase Auth ID token. Send it as `Authorization: Bearer <token>`.',
   });
 
-  registerSchemas(registry);
   registerPaths(registry);
 
   const generator = new OpenApiGeneratorV3(registry.definitions);
@@ -39,8 +38,10 @@ export function buildOpenApiDocument() {
         'Auth: every `/api/*` request requires a Firebase ID token (`Authorization: Bearer <token>`).\n' +
         'WebSocket endpoints are not in this OpenAPI spec — see `docs/websocket.md`.',
     },
-    servers: [{ url: 'http://localhost:4000', description: 'Local dev / VM' },
-      { url: 'http://34.170.117.171:4000', description: 'GCP VM' }],
+    servers: [
+      { url: 'http://localhost:4000', description: 'Local dev / VM' },
+      { url: 'http://34.170.117.171:4000', description: 'GCP VM' },
+    ],
     tags: [
       { name: 'Sessions', description: '세션 / Sessions' },
       { name: 'Turns', description: '발화 / Turns' },
