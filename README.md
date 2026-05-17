@@ -129,6 +129,44 @@ NEXT_PUBLIC_USE_REAL_API=1
 
 Important: `NEXT_PUBLIC_*` values are embedded at Next.js build time. If you change them in Docker or production, rebuild the client image.
 
+### Environment File Map
+
+Production VM files should live in the checked-out repository, but must not be committed:
+
+```text
+/home/<vm-user>/mental-guard/client/.env.local  # Next.js public build-time config
+/home/<vm-user>/mental-guard/server/.env        # API, DB, Firebase Admin, GCP, CORS
+/home/<vm-user>/mental-guard/llm/.env           # Gemini model service
+```
+
+Use each file for a different responsibility:
+
+| File | Used by | Contains |
+|---|---|---|
+| `client/.env.local` | frontend build | Firebase Web SDK values, public frontend URL, public WSS backend URL |
+| `server/.env` | backend runtime | database URL, Firebase Admin, GCP STT/GCS, ML service URL, CORS origins |
+| `llm/.env` | LLM runtime | Gemini API key and model name |
+
+For the current VM-style deployment, the production values usually look like:
+
+```env
+# client/.env.local
+NEXT_PUBLIC_BACKEND_WSS_URL=wss://mental-guard.duckdns.org
+NEXT_PUBLIC_PUBLIC_URL=https://mental-guard-client.duckdns.org
+```
+
+```env
+# server/.env
+ML_SERVICE_URL=http://host.docker.internal:5555
+CORS_ORIGINS=https://mental-guard-client.duckdns.org
+```
+
+```env
+# llm/.env
+GEMINI_API_KEY=your-gemini-api-key
+MODEL_NAME=gemini-2.5-flash-lite
+```
+
 ## 3. Database Setup
 
 If you do not already have PostgreSQL, start one with Docker:
@@ -300,6 +338,48 @@ CORS_ORIGINS=https://your-frontend-domain
 
 Use `wss://`, not `ws://`, when the frontend is served over HTTPS. Otherwise the browser will block the WebSocket connection and the caller page will fall back to REST upload.
 
+### Caddy Reverse Proxy
+
+The production VM can expose each service through a separate domain with Caddy. Point DNS A records for each domain to the VM public IP, then configure Caddy:
+
+```text
+# /etc/caddy/Caddyfile
+
+mental-guard-client.duckdns.org {
+  encode gzip
+  reverse_proxy 127.0.0.1:3000
+}
+
+mental-guard.duckdns.org {
+  encode gzip
+  reverse_proxy 127.0.0.1:4000
+}
+
+# Optional. Prefer keeping the LLM service private and reachable only by
+# the backend through http://host.docker.internal:5555. Expose it only if
+# you explicitly need public API testing.
+mental-guard-llm.duckdns.org {
+  encode gzip
+  reverse_proxy 127.0.0.1:5555
+}
+```
+
+Caddy automatically handles TLS certificates for these domains and supports WebSocket reverse proxying. The backend `/ws/*` endpoints are served by the same backend domain:
+
+```text
+wss://mental-guard.duckdns.org/ws/sessions/:id/caller-audio
+wss://mental-guard.duckdns.org/ws/sessions/:id/agent-events
+```
+
+After editing the Caddyfile:
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+Make sure the VM firewall allows ports `80` and `443`. The service containers still listen locally on ports `3000`, `4000`, and `5555`; Caddy is the public HTTPS entrypoint.
+
 ## 9. GitHub Actions Dev Deploy
 
 The dev deployment workflow is:
@@ -329,6 +409,16 @@ CLIENT_BACKEND_INTERNAL_URL
 ```text
 /home/ubuntu/mental-guard
 ```
+
+The workflow expects the three env files to already exist on the VM:
+
+```text
+$VM_REPO_PATH/client/.env.local
+$VM_REPO_PATH/server/.env
+$VM_REPO_PATH/llm/.env
+```
+
+Because `NEXT_PUBLIC_*` values are build-time values, changing `client/.env.local` requires a client image rebuild.
 
 ## 10. Smoke Test
 
